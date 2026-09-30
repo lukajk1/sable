@@ -1,5 +1,6 @@
 using System.Numerics;
 using ImGuiNET;
+using Sable.Diagnostics;
 using Sable.Input;
 using Sable.Model;
 using Sable.Paint;
@@ -28,6 +29,7 @@ internal sealed class App : IDisposable
     private readonly Viewport3D view3d = new();
     private readonly UvView uvView = new();
     private readonly UndoStack undo = new();
+    private readonly FrameProfiler profiler = new();
     private LitShader? shader;
     private GpuModel? Model => state.Model;
 
@@ -42,6 +44,8 @@ internal sealed class App : IDisposable
     private bool pressureToSize;
     private float pressureCurve = 1.6f;
     private float lastPressure = 1f;
+    /// <summary>Texture sampling in the 3D view; the UV view always shows exact texels.</summary>
+    private TextureView textureView = TextureView.Pixel;
     private float dabSize = 8f;
     private Vector3 hsv = new(0.07f, 0.75f, 0.9f);
     private Vector3 hsvAtPickerOpen;
@@ -87,7 +91,11 @@ internal sealed class App : IDisposable
     private int selfTestStep = -1;
     private bool quit;
 
-    public App(AppOptions options) => this.options = options;
+    public App(AppOptions options)
+    {
+        this.options = options;
+        textureView = (TextureView)options.TextureView;
+    }
 
     private Color PaintColor
     {
@@ -134,6 +142,8 @@ internal sealed class App : IDisposable
         Raylib.SetExitKey(KeyboardKey.Null);
         rlImGui.Setup(true);
         shader = new LitShader();
+        // Keeps the garbage collector from stopping everything for a full collection mid-stroke.
+        System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;
 
         if (options.ModelPath != null) StartLoad(options.ModelPath);
         else if (options.ScreenshotPath != null) screenshotFrames = 3;
@@ -142,6 +152,7 @@ internal sealed class App : IDisposable
         {
             FinishLoad();
             HandleDroppedFiles();
+            profiler.Mark("load");
 
             float w = Raylib.GetScreenWidth(), h = Raylib.GetScreenHeight();
             var area = new Rectangle(PanelWidth, menuHeight, w - PanelWidth, h - menuHeight - StatusHeight);
@@ -156,14 +167,21 @@ internal sealed class App : IDisposable
             view3d.OrbitCenter = SelectionCenter();
             view3d.Update(rect3d, free && Raylib.CheckCollisionPointRec(mouse, rect3d), sMin, sMax);
             uvView.Update(rectUv, free && Raylib.CheckCollisionPointRec(mouse, rectUv), state);
+            profiler.Mark("views");
             HandleShortcuts();
             UpdateTools(free);
             RunSelfTest();
+            profiler.Mark("tools");
             Model?.UploadTextures();
             UpdateTitle();
+            profiler.Mark("upload");
 
+            SetTextureView(textureView);
             view3d.Render(state, shader);
+            profiler.Mark("3d");
+            SetTextureView(TextureView.Pixel);
             uvView.Render(state);
+            profiler.Mark("uv");
 
             Raylib.BeginDrawing();
             Raylib.ClearBackground(new Color(30, 30, 30, 255));
@@ -184,9 +202,29 @@ internal sealed class App : IDisposable
             UpdateSystemCursor();
 
             TakeScreenshotIfDue();
+            profiler.Mark("ui");
             Raylib.EndDrawing();
+            profiler.Mark("present");
+            profiler.EndFrame(FrameContext());
         }
     }
+
+    /// <summary>What was going on, for the hitch log.</summary>
+    private string FrameContext()
+    {
+        string where = stroke == null ? "no stroke" : strokeIn3D ? "stroke in 3D" : "stroke in UV";
+        string texture = state.ActiveTexture >= 0 && Model != null
+            ? $"{Model.Textures[state.ActiveTexture].Width}x{Model.Textures[state.ActiveTexture].Height}" : "none";
+        return $"{tool}, {where}, size {brushSize:0}, texture {texture}, pen {(PenInput.PenDetected ? "yes" : "no")}";
+    }
+
+    private void SetTextureView(TextureView mode)
+    {
+        if (Model == null) return;
+        foreach (var texture in Model.Textures) texture.SetView(mode);
+    }
+
+    private static readonly string[] TextureViewNames = { "Pixel (nearest)", "Smooth (bilinear)", "Smooth + mipmaps" };
 
     // ---------- layout ----------
 
@@ -290,6 +328,7 @@ internal sealed class App : IDisposable
             return;
         }
 
+        profiler.Skip();
         EndStroke();
         Model?.Dispose();
         undo.Clear();
@@ -305,7 +344,10 @@ internal sealed class App : IDisposable
             int found = Model.Source.Objects.FindIndex(o => o.Name.Contains(options.SelectPart, StringComparison.OrdinalIgnoreCase));
             if (found >= 0) SelectObject(found);
         }
-        view3d.Camera.Frame(Model.Source.Min, Model.Source.Max);
+        if (state.ActiveObject >= 0)
+            view3d.Camera.Frame(Model.Source.Objects[state.ActiveObject].Min, Model.Source.Objects[state.ActiveObject].Max);
+        else
+            view3d.Camera.Frame(Model.Source.Min, Model.Source.Max);
         uvView.RequestFit();
 
         var s = Model.Source;
@@ -326,6 +368,7 @@ internal sealed class App : IDisposable
 
     private void OpenDialog()
     {
+        profiler.Skip();
         using var dialog = new System.Windows.Forms.OpenFileDialog
         {
             Title = "Open model",
@@ -346,6 +389,7 @@ internal sealed class App : IDisposable
     private void SaveAll()
     {
         if (Model == null) return;
+        profiler.Skip();
         EndStroke();
         var saved = new List<string>();
         foreach (var texture in Model.Textures.Where(t => t.Dirty))
@@ -631,14 +675,30 @@ internal sealed class App : IDisposable
             if (painting && !sampling && hasHit) Show3DCursor(hit);
             if (pressed && stroke == null)
             {
-                if (sampling) { if (sample.Valid) SetColor(sample.Color); }
+                // A left drag that starts over nothing navigates, exactly like the middle button.
+                if (sampling)
+                {
+                    if (sample.Valid) SetColor(sample.Color);
+                    else view3d.BeginLeftDragNavigation();
+                }
                 else if (painting)
                 {
-                    if (state.ActiveObject < 0) SetStatus("Select an object to paint (V, then click it).", error: true);
-                    else if (hasHit) Begin3D(hit);
+                    if (hasHit) Begin3D(hit);
+                    else if (!ObjectUnderMouse()) view3d.BeginLeftDragNavigation();
+                    else if (state.ActiveObject < 0) SetStatus("Select an object to paint (V, then click it).", error: true);
+                    else SetStatus($"Only the active object ({source.Objects[state.ActiveObject].Name}) is painted; select another with V.", error: false);
                 }
-                else if (tool == Tool.Select) { selectPressed = true; selectPressPosition = view3d.LocalMouse; }
-                else if (tool == Tool.Lasso) SetStatus("The lasso works in the UV view.", error: false);
+                else if (tool == Tool.Select)
+                {
+                    selectPressed = true;
+                    selectPressPosition = view3d.LocalMouse;
+                    if (!ObjectUnderMouse()) view3d.BeginLeftDragNavigation();
+                }
+                else if (tool == Tool.Lasso)
+                {
+                    if (ObjectUnderMouse()) SetStatus("The lasso works in the UV view.", error: false);
+                    else view3d.BeginLeftDragNavigation();
+                }
             }
         }
 
@@ -766,6 +826,13 @@ internal sealed class App : IDisposable
     /// <summary>The selection mask for strokes on <paramref name="texture"/>: paint stays inside it.</summary>
     private bool[]? MaskFor(int texture) =>
         state.Selection is { Any: true } s && s.Texture == texture ? s.Mask : null;
+
+    /// <summary>Whether any visible object is under the mouse in the 3D view.</summary>
+    private bool ObjectUnderMouse()
+    {
+        var ray = view3d.MouseRay();
+        return Raycast.Cast(Model!.Source, ray.Position, ray.Direction, state.ObjectVisible, out _);
+    }
 
     private void Show3DCursor(SurfaceHit hit)
     {
@@ -1183,6 +1250,12 @@ internal sealed class App : IDisposable
         {
             ImGui.MenuItem("Wireframe", "Z", ref view3d.Wireframe);
             ImGui.MenuItem("Grid", null, ref view3d.Grid);
+            if (ImGui.BeginMenu("Texture view (3D)"))
+            {
+                for (int i = 0; i < TextureViewNames.Length; i++)
+                    if (ImGui.MenuItem(TextureViewNames[i], null, (int)textureView == i)) textureView = (TextureView)i;
+                ImGui.EndMenu();
+            }
             bool ortho = view3d.Camera.Ortho;
             if (ImGui.MenuItem("Orthographic", "5", ref ortho)) view3d.Camera.Ortho = ortho;
             if (ImGui.MenuItem("Local view", "/", state.Isolated != null, Model != null && (state.ActiveObject >= 0 || state.Isolated != null))) ToggleLocalView();
@@ -1311,6 +1384,11 @@ internal sealed class App : IDisposable
         DrawPressureSection();
         ImGui.SetNextItemWidth(150);
         ImGui.SliderFloat("Lighting", ref view3d.Shade, 0f, 1f, view3d.Shade <= 0 ? "flat" : "%.2f");
+        ImGui.SetNextItemWidth(150);
+        int viewIndex = (int)textureView;
+        if (ImGui.Combo("Texture view", ref viewIndex, TextureViewNames, TextureViewNames.Length)) textureView = (TextureView)viewIndex;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("How textures are sampled in the 3D view (the UV view always shows exact texels).\nPixel: hard texels, for pixel art.\nSmooth: bilinear, blends neighbouring texels; shimmers at a distance.\nSmooth + mipmaps: trilinear with 16x anisotropic, the usual game setting for high-res textures.");
     }
 
     private void DrawPressureSection()
@@ -1431,7 +1509,8 @@ internal sealed class App : IDisposable
         if (statusIsError && loading == null) ImGui.TextColored(new Vector4(1f, 0.45f, 0.4f, 1f), text);
         else ImGui.TextUnformatted(text);
 
-        string right = uvView.Hovered && uvView.MouseOnTexture
+        string right = profiler.LastHitch is { } hitch ? $"{hitch} - details in {profiler.LogPath}"
+            : uvView.Hovered && uvView.MouseOnTexture
             ? $"texel {(int)uvView.MouseTexel.X}, {(int)uvView.MouseTexel.Y}   ({uvView.TextureSize.X:0}x{uvView.TextureSize.Y:0})"
             : "MMB orbit  Shift+MMB pan  Wheel zoom  1/3/7 views  5 ortho  / local  Tab submesh  H hide";
         float width = ImGui.CalcTextSize(right).X;
@@ -1563,6 +1642,7 @@ internal sealed class App : IDisposable
     {
         if (options.ScreenshotPath == null || screenshotFrames < 0) return;
         if (screenshotFrames-- > 0) return;
+        profiler.Skip();
         Image image = Raylib.LoadImageFromScreen();
         Raylib.ExportImage(image, options.ScreenshotPath);
         Raylib.UnloadImage(image);

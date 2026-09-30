@@ -6,7 +6,7 @@ namespace Sable.Views;
 
 /// <summary>
 /// The 3D view, rendered into its own texture. Blender controls while the mouse is over it:
-/// MMB orbit, Shift+MMB pan, Ctrl+MMB or wheel zoom; 1/3/7 front, right and top
+/// MMB orbit, Shift+MMB pan, Ctrl+MMB or wheel zoom (a left drag from empty space does the same); 1/3/7 front, right and top
 /// (numpad or the number row; Ctrl for the opposite side), 2/4/6/8 step the orbit, 9 flips, 5 toggles ortho,
 /// Home frames everything (the app handles framing the selection).
 /// </summary>
@@ -29,8 +29,19 @@ public sealed class Viewport3D : IDisposable
 
     private RenderTexture2D target;
     private int width, height;
+    private MouseButton navButton = MouseButton.Middle;
 
     public Texture2D Texture => target.Texture;
+
+    /// <summary>
+    /// Starts navigating with the left button, as if it were the middle one: the app calls this when a left drag
+    /// starts over empty space. It lasts until the left button is released.
+    /// </summary>
+    public void BeginLeftDragNavigation()
+    {
+        Navigating = true;
+        navButton = MouseButton.Left;
+    }
 
     public void Update(Rectangle rect, bool hovered, Vector3 frameMin, Vector3 frameMax)
     {
@@ -41,8 +52,12 @@ public sealed class Viewport3D : IDisposable
         bool shift = Raylib.IsKeyDown(KeyboardKey.LeftShift) || Raylib.IsKeyDown(KeyboardKey.RightShift);
         bool ctrl = Raylib.IsKeyDown(KeyboardKey.LeftControl) || Raylib.IsKeyDown(KeyboardKey.RightControl);
 
-        if (hovered && Raylib.IsMouseButtonPressed(MouseButton.Middle)) Navigating = true;
-        if (!Raylib.IsMouseButtonDown(MouseButton.Middle)) Navigating = false;
+        if (hovered && Raylib.IsMouseButtonPressed(MouseButton.Middle))
+        {
+            Navigating = true;
+            navButton = MouseButton.Middle;
+        }
+        if (Navigating && !Raylib.IsMouseButtonDown(navButton)) Navigating = false;
 
         if (Navigating)
         {

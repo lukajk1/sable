@@ -28,8 +28,7 @@ public sealed class Stroke
         this.color = color with { A = 255 };
         this.opacity = Math.Clamp(opacity, 0f, 1f);
         this.mask = mask;
-        before = (Color[])texture.Pixels.Clone();
-        coverage = new float[texture.Width * texture.Height];
+        (before, coverage) = texture.BeginStrokeBuffers();
     }
 
     /// <summary>Adds one dab's share <paramref name="shape"/> (0..1) to texel (x, y), wrapped into the texture.</summary>
@@ -57,7 +56,7 @@ public sealed class Stroke
         minY = Math.Min(minY, y);
         maxX = Math.Max(maxX, x);
         maxY = Math.Max(maxY, y);
-        Texture.Touch();
+        Texture.Touch(x, y);
     }
 
     private static byte Lerp(byte a, byte b, float t) => (byte)MathF.Round(a + (b - a) * t);

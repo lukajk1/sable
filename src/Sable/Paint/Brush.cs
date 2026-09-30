@@ -47,6 +47,7 @@ public static class Brush
     /// <summary>A round dab in texture space (the UV view).</summary>
     public static void DabTexels(Stroke stroke, Vector2 center, float size, float hardness)
     {
+        Diagnostics.FrameProfiler.Dabs++;
         float r = MathF.Max(size * 0.5f, 0.5f);
         int n = Samples(size);
         int x0 = (int)MathF.Floor(center.X - r), x1 = (int)MathF.Ceiling(center.X + r);
@@ -99,6 +100,7 @@ public static class Brush
     public static void DabSurface(Stroke stroke, LoadedModel model, int objectIndex, int textureIndex, SurfaceHit hit,
         float size, float hardness, Func<int, int> textureOfPart)
     {
+        Diagnostics.FrameProfiler.Dabs++;
         var tex = stroke.Texture;
         var textureSize = new Vector2(tex.Width, tex.Height);
         var hitPart = model.Parts[hit.Part];

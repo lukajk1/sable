@@ -23,6 +23,7 @@ public static class Raycast
     /// </summary>
     public static bool Cast(LoadedModel model, Vector3 origin, Vector3 direction, Func<int, bool> objectFilter, out SurfaceHit hit)
     {
+        Diagnostics.FrameProfiler.Raycasts++;
         hit = default;
         hit.Distance = float.MaxValue;
         bool found = false;

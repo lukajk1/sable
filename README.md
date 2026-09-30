@@ -21,8 +21,8 @@ Open models by dropping them on the window, with File > Open (Ctrl+O), or on the
 
 | Input | Action |
 | --- | --- |
-| Middle drag | Orbit (around the selection, if there is one) |
-| Shift + middle drag | Pan |
+| Middle drag, or left drag from empty space | Orbit (around the selection, if there is one) |
+| Shift + middle (or empty-space left) drag | Pan |
 | Wheel, or Ctrl + middle drag | Zoom |
 | 1 / 3 / 7 (numpad or number row) | Front / right / top (Ctrl: back / left / bottom) |
 | 2 / 4 / 6 / 8 | Orbit in 15° steps |
@@ -67,6 +67,10 @@ With a Wacom (or any Windows Ink pen), pressure drives flow, and optionally size
 
 Over the views, each tool has its own cursor: a pencil (its body in the paint colour), a crosshair with a small brush for the brush (the view draws its size around it), the pipette and loupe for the eyedropper, and a lasso that turns into a move cross over the selection. Select keeps the normal arrow.
 
+The 3D view's **Texture view** (panel or View menu) chooses how textures are sampled: Pixel (nearest, for pixel art), Smooth (bilinear), or Smooth + mipmaps (trilinear with 16x anisotropic, the usual game setting for high-res textures; mipmaps stay current while painting). The UV view always shows exact texels. `--texview 0|1|2` picks one at launch.
+
+If a frame takes over 40 ms, the status bar says so for a few seconds and a line goes to `%TEMP%\Sable\hitches.log`: which part of the frame was slow (tools, texture upload, 3D, UV, UI, present), how many dabs and ray casts it did, and whether the garbage collector ran.
+
 On the model the brush paints every texel whose point on the surface falls inside the brush, so strokes carry across UV seams; it only paints faces turned the same way as the one under the cursor. Objects with UVs but no texture get a **New texture** button in the panel, filled with the material colour.
 
 Saving writes each changed texture back to its file. For a `.blend`, that is the image file the .blend itself uses (found by asking Blender), so Unity reimports it. Textures without a file (embedded or new) go next to the model as `<model>_<texture>.png`, and need hooking up to the material in Blender.
@@ -81,6 +85,7 @@ Ctrl+R reloads the model from disk.
 - `Views/`: the 3D view with its camera, and the UV view.
 - `UI/`: the colour wheel.
 - `Input/`: pen pressure from Windows Ink (`PenInput`).
+- `Diagnostics/`: the frame profiler behind the hitch log.
 - `App.cs`: the window, tools, selection and panels; `EditorState.cs`: what's selected and shown.
 
 Built with .NET 9, [Raylib-cs](https://github.com/ChrisDill/Raylib-cs), [ImGui.NET](https://github.com/ImGuiNET/ImGui.NET) via [rlImGui-cs](https://github.com/raylib-extras/rlImGui-cs), and [AssimpNet](https://bitbucket.org/Starnick/assimpnet).
