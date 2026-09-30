@@ -3,7 +3,7 @@ using Sable.Model;
 
 namespace Sable.Paint;
 
-public enum Tool { Select, Pencil, Brush, Eyedropper, Fill, Zoom, Lasso, BoxSelect }
+public enum Tool { Select, Pencil, Brush, Eraser, Eyedropper, Fill, Zoom, Lasso, BoxSelect }
 
 /// <summary>
 /// How the paint tools mark texels. The pencil sets exactly one texel, fully opaque. The brush is round, sized in
@@ -80,14 +80,15 @@ public static class Brush
     /// to it through 4-way neighbours or, with <paramref name="contiguous"/> off, all of them. The stroke's mask (a
     /// selection) limits it; clicking outside the selection fills nothing.
     /// </summary>
-    public static void Flood(Stroke stroke, int x, int y, float tolerance, bool contiguous, bool[]? mask)
+    /// <param name="sample">The colours compared (all layers flattened); the painted layer's own when null.</param>
+    public static void Flood(Stroke stroke, int x, int y, float tolerance, bool contiguous, bool[]? mask, Raylib_cs.Color[]? sample = null)
     {
         var tex = stroke.Texture;
         int w = tex.Width, h = tex.Height;
         if (x < 0 || y < 0 || x >= w || y >= h) return;
         if (mask != null && !mask[y * w + x]) return;
 
-        var pixels = tex.Pixels;
+        var pixels = sample ?? stroke.Layer.Pixels;
         var target = pixels[y * w + x];
         int limit = (int)MathF.Round(Math.Clamp(tolerance, 0f, 1f) * 255f);
         bool Matches(int i)

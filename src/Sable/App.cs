@@ -17,12 +17,11 @@ namespace Sable;
 /// bar between them), and a status bar. Models load on a background thread; drop one on the window or use File > Open.
 /// Painting always goes to the one active object, in either view.
 /// </summary>
-internal sealed class App : IDisposable
+internal sealed partial class App : IDisposable
 {
     private const float PanelWidth = 300f;
     private const float StatusHeight = 26f;
     private const float SplitterWidth = 6f;
-    private static readonly int[] TextureSizes = { 16, 32, 64, 128, 256, 512, 1024, 2048 };
 
     private readonly AppOptions options;
     private readonly EditorState state = new();
@@ -61,7 +60,6 @@ internal sealed class App : IDisposable
     private bool openPicker, closePicker, pickerOpen;
     private Vector2 pickerPosition;
     private string hexInput = "";
-    private int newTextureSize = 64;
 
     // The stroke in progress.
     private Stroke? stroke;
@@ -159,9 +157,9 @@ internal sealed class App : IDisposable
         }
     }
 
-    /// <summary>A stroke on a texture: the pencil always at full opacity, the brush at the opacity slider.</summary>
+    /// <summary>A stroke on a texture's active layer: the pencil always at full opacity, the brush and eraser at the opacity slider.</summary>
     private Stroke NewStroke(int texture) =>
-        new(Model!.Textures[texture], PaintColor, tool == Tool.Brush ? opacity : 1f, MaskFor(texture));
+        new(Model!.Textures[texture], PaintColor, tool is Tool.Brush or Tool.Eraser ? opacity : 1f, MaskFor(texture), erase: tool == Tool.Eraser);
 
     /// <summary>Pen pressure 0..1 while the pen is drawing; 1 with the mouse.</summary>
     private float RawPressure => usingPen ? (PenInput.InContact ? PenInput.Pressure : 0f) : 1f;
@@ -173,7 +171,7 @@ internal sealed class App : IDisposable
     private void SetDab(float pressure)
     {
         if (stroke == null) return;
-        if (tool != Tool.Brush)
+        if (tool is not (Tool.Brush or Tool.Eraser))
         {
             stroke.Flow = 1f;
             return;
@@ -255,7 +253,9 @@ internal sealed class App : IDisposable
             DrawPanel(h);
             DrawStatusBar(w, h);
             DrawUvToolbar();
+            DrawLayersWindow();
             DrawOpenPathPopup();
+            DrawNewTexturePopup();
             DrawColorPicker();
             DrawToolCursor();
             ImGui.PopItemFlag();
@@ -428,6 +428,7 @@ internal sealed class App : IDisposable
         var s = Model.Source;
         SetStatus($"Opened {s.Name}: {s.Objects.Count} objects, {s.Parts.Sum(p => p.TriangleCount)} tris, {s.Textures.Count} textures"
                   + (s.Warnings.Count > 0 ? $", {s.Warnings.Count} warnings" : ""), error: false);
+        LoadLayers();
         if (options.Bench) benchStep = 0;
         else if (options.SelfTest) selfTestStep = 0;
         else if (options.ScreenshotPath != null) screenshotFrames = 4;
@@ -588,7 +589,8 @@ internal sealed class App : IDisposable
             try
             {
                 texture.Save(path);
-                saved.Add(Path.GetFileName(path));
+                LayerFile.Write(texture, path);
+                saved.Add(Path.GetFileName(path) + (texture.HasLayers ? $" ({texture.Layers.Count} layers)" : ""));
             }
             catch (Exception e)
             {
@@ -599,10 +601,12 @@ internal sealed class App : IDisposable
         SetStatus(saved.Count == 0 ? "Nothing to save." : $"Saved {string.Join(", ", saved)}", error: false);
     }
 
-    private string DefaultSavePath(PaintTexture texture)
+    private string DefaultSavePath(PaintTexture texture) => DefaultSavePath(texture.Name);
+
+    private string DefaultSavePath(string textureName)
     {
         string source = Model!.Source.SourcePath;
-        string name = Path.GetFileNameWithoutExtension(texture.Name);
+        string name = Path.GetFileNameWithoutExtension(textureName);
         foreach (char c in Path.GetInvalidFileNameChars()) name = name.Replace(c, '_');
         name = name.Replace(' ', '_').Replace("(", "").Replace(")", "");
         return Path.Combine(Path.GetDirectoryName(source)!, $"{Path.GetFileNameWithoutExtension(source)}_{name}.png");
@@ -641,6 +645,7 @@ internal sealed class App : IDisposable
             if (Pressed(KeyboardKey.Z)) { EndStroke(); if (shift) undo.Redo(); else undo.Undo(); }
             if (Pressed(KeyboardKey.Y)) { EndStroke(); undo.Redo(); }
             if (Raylib.IsKeyPressed(KeyboardKey.D)) state.Selection = null;
+            HandleLayerShortcuts(shift);
             return;
         }
 
@@ -658,6 +663,7 @@ internal sealed class App : IDisposable
         if (Raylib.IsKeyPressed(KeyboardKey.V)) tool = Tool.Select;
         if (Raylib.IsKeyPressed(KeyboardKey.N)) tool = Tool.Pencil;
         if (Raylib.IsKeyPressed(KeyboardKey.B)) tool = Tool.Brush;
+        if (Raylib.IsKeyPressed(KeyboardKey.E)) tool = Tool.Eraser;
         if (Raylib.IsKeyPressed(KeyboardKey.I)) tool = Tool.Eyedropper;
         if (Raylib.IsKeyPressed(KeyboardKey.X)) tool = Tool.Lasso;
         if (Raylib.IsKeyPressed(KeyboardKey.M)) tool = Tool.BoxSelect;
@@ -833,6 +839,7 @@ internal sealed class App : IDisposable
         {
             case Tool.Pencil: return CursorIcon.Pencil;
             case Tool.Brush: return CursorIcon.Brush;
+            case Tool.Eraser: return CursorIcon.Eraser;
             case Tool.Fill: return CursorIcon.Fill;
             case Tool.Zoom: return CursorIcon.Zoom;
             case Tool.Lasso:
@@ -850,7 +857,7 @@ internal sealed class App : IDisposable
     {
         if (Model == null) return;
         var source = Model.Source;
-        bool painting = tool is Tool.Pencil or Tool.Brush;
+        bool painting = tool is Tool.Pencil or Tool.Brush or Tool.Eraser;
         // Holding Alt turns any tool into the eyedropper until it's released.
         bool sampling = (tool == Tool.Eyedropper || alt) && stroke == null && lassoDrag == LassoDrag.None;
         bool pressed = pointerPressed;
@@ -960,7 +967,7 @@ internal sealed class App : IDisposable
                 else if (tool == Tool.Select && state.Mode == SelectMode.Submesh) SelectInUv();
             }
         }
-        if (stroke != null && !strokeIn3D && tool is Tool.Pencil or Tool.Brush) ShowUvCursor();
+        if (stroke != null && !strokeIn3D && tool is Tool.Pencil or Tool.Brush or Tool.Eraser) ShowUvCursor();
         if (sampling && uvView.Hovered && free && state.ActiveTexture < 0) cursorIcon = CursorIcon.Eyedropper;
     }
 
@@ -1106,7 +1113,8 @@ internal sealed class App : IDisposable
         }
         else
         {
-            Brush.Flood(fill, x, y, fillTolerance, fillContiguous, mask);
+            if (fillAllLayers) tex.EnsureComposite();
+            Brush.Flood(fill, x, y, fillTolerance, fillContiguous, mask, fillAllLayers ? tex.Composite : null);
         }
         if (fill.Finish() is { } step) undo.Push(step);
     }
@@ -1238,7 +1246,7 @@ internal sealed class App : IDisposable
     {
         near = default;
         if (Model == null || state.ActiveObject < 0 || !state.ObjectVisible(state.ActiveObject)) return false;
-        float halo = MathF.Max(16f, cursorScreenRadius);
+        float halo = MathF.Max(11f, cursorScreenRadius * 0.7f);
         var camera = view3d.Camera.ToRaylib();
         bool OnActive(int i) => i == state.ActiveObject;
         foreach (float reach in new[] { 0.35f, 0.7f, 1f })
@@ -1419,7 +1427,7 @@ internal sealed class App : IDisposable
 
     private void SetColor(Color c) => hsv = ColorWheel.RgbToHsv(new Vector3(c.R, c.G, c.B) / 255f, hsv.X);
 
-    private enum CursorIcon { System, Eyedropper, Pencil, Brush, Lasso, Move, Fill, Zoom, Box }
+    private enum CursorIcon { System, Eyedropper, Pencil, Brush, Eraser, Lasso, Move, Fill, Zoom, Box }
 
     /// <summary>Shows the system cursor, or hides it while a tool draws its own.</summary>
     private void UpdateSystemCursor()
@@ -1444,6 +1452,7 @@ internal sealed class App : IDisposable
             case CursorIcon.Eyedropper: DrawEyedropper(); break;
             case CursorIcon.Pencil: DrawPencilIcon(draw, cursorTip); break;
             case CursorIcon.Brush: DrawBrushIcon(draw, cursorTip); break;
+            case CursorIcon.Eraser: DrawEraserIcon(draw, cursorTip); break;
             case CursorIcon.Lasso: DrawLassoIcon(draw, cursorTip); break;
             case CursorIcon.Move: DrawMoveIcon(draw, cursorTip); break;
             case CursorIcon.Fill: DrawBucketIcon(draw, cursorTip); break;
@@ -1452,7 +1461,7 @@ internal sealed class App : IDisposable
         }
         if (selfTestIcons)
         {
-            var at = new Vector2(Raylib.GetScreenWidth() - 330, menuHeight + 70);
+            var at = new Vector2(Raylib.GetScreenWidth() - 330, Raylib.GetScreenHeight() - 170);
             DrawPencilIcon(draw, at);
             DrawBrushIcon(draw, at + new Vector2(70, 0));
             DrawLassoIcon(draw, at + new Vector2(140, 0));
@@ -1460,6 +1469,7 @@ internal sealed class App : IDisposable
             DrawBucketIcon(draw, at + new Vector2(0, 60));
             DrawZoomIcon(draw, at + new Vector2(90, 60));
             DrawBoxIcon(draw, at + new Vector2(160, 60));
+            DrawEraserIcon(draw, at + new Vector2(230, 60));
         }
     }
 
@@ -1484,8 +1494,18 @@ internal sealed class App : IDisposable
         Outlined(draw, new[] { body + Across * w, end + Across * w, end - Across * w, body - Across * w }, U32(new Vector4(0.95f, 0.6f, 0.65f, 1)));
     }
 
-    /// <summary>A crosshair on the hot spot (the view draws the brush's size around it) and a small brush beside it.</summary>
-    private void DrawBrushIcon(ImDrawListPtr draw, Vector2 center)
+    /// <summary>The brush's crosshair and a small eraser beside it.</summary>
+    private static void DrawEraserIcon(ImDrawListPtr draw, Vector2 center)
+    {
+        DrawCrosshair(draw, center);
+        const float w = 4.5f;
+        Vector2 tip = center + new Vector2(10, -10);
+        Vector2 rubberEnd = tip + Along * 8f, sleeveEnd = rubberEnd + Along * 12f;
+        Outlined(draw, new[] { tip + Across * w, rubberEnd + Across * w, rubberEnd - Across * w, tip - Across * w }, U32(new Vector4(0.95f, 0.6f, 0.65f, 1)));
+        Outlined(draw, new[] { rubberEnd + Across * w, sleeveEnd + Across * w, sleeveEnd - Across * w, rubberEnd - Across * w }, U32(new Vector4(0.3f, 0.45f, 0.8f, 1)));
+    }
+
+    private static void DrawCrosshair(ImDrawListPtr draw, Vector2 center)
     {
         foreach (var (a, b) in new[] { (new Vector2(-7, 0), new Vector2(-2, 0)), (new Vector2(2, 0), new Vector2(7, 0)),
                                        (new Vector2(0, -7), new Vector2(0, -2)), (new Vector2(0, 2), new Vector2(0, 7)) })
@@ -1493,7 +1513,12 @@ internal sealed class App : IDisposable
             draw.AddLine(center + a, center + b, Black, 3f);
             draw.AddLine(center + a, center + b, White, 1f);
         }
+    }
 
+    /// <summary>A crosshair on the hot spot (the view draws the brush's size around it) and a small brush beside it.</summary>
+    private void DrawBrushIcon(ImDrawListPtr draw, Vector2 center)
+    {
+        DrawCrosshair(draw, center);
         const float w = 3.5f;
         Vector2 tip = center + new Vector2(11, -11);
         Vector2 bristleEnd = tip + Along * 9f, ferruleEnd = bristleEnd + Along * 4f, handleEnd = ferruleEnd + Along * 13f;
@@ -1662,6 +1687,8 @@ internal sealed class App : IDisposable
             if (ImGui.MenuItem("Save textures", "Ctrl+S", false, Model != null)) SaveAll();
             ImGui.Separator();
             bool hasTexture = Model != null && state.ActiveTexture >= 0;
+            if (ImGui.MenuItem("New texture...", null, false, Model != null)) OpenNewTexture();
+            if (ImGui.MenuItem("Import image as layer...", null, false, hasTexture)) ImportImageAsLayer();
             if (ImGui.MenuItem("Import image into texture...", null, false, hasTexture)) ImportImage();
             if (ImGui.MenuItem("Export texture as...", null, false, hasTexture)) ExportTexture();
             if (ImGui.BeginMenu("Export UV layout", Model != null))
@@ -1683,6 +1710,11 @@ internal sealed class App : IDisposable
         {
             if (ImGui.MenuItem("Undo", "Ctrl+Z", false, undo.CanUndo)) undo.Undo();
             if (ImGui.MenuItem("Redo", "Ctrl+Shift+Z", false, undo.CanRedo)) undo.Redo();
+            ImGui.Separator();
+            bool layers = ActiveTextureObject != null;
+            if (ImGui.MenuItem("New layer", "Ctrl+Shift+N", false, layers)) NewLayer();
+            if (ImGui.MenuItem("Duplicate layer", "Ctrl+J", false, layers)) DuplicateLayer();
+            if (ImGui.MenuItem("Merge layer down", "Ctrl+E", false, layers && ActiveTextureObject!.ActiveLayerIndex > 0)) MergeLayerDown();
             ImGui.EndMenu();
         }
         if (ImGui.BeginMenu("View"))
@@ -1789,9 +1821,10 @@ internal sealed class App : IDisposable
         ToolButton("Pencil 1px", Tool.Pencil, "N");
         ToolButton("Brush", Tool.Brush, "B");
         ImGui.SameLine();
+        ToolButton("Eraser", Tool.Eraser, "E");
         ToolButton("Eyedropper", Tool.Eyedropper, "I");
-        ToolButton("Fill", Tool.Fill, "G");
         ImGui.SameLine();
+        ToolButton("Fill", Tool.Fill, "G");
         ToolButton("Zoom", Tool.Zoom, "Z");
         ImGui.TextDisabled("Lasso and box select: on the UV view.");
 
@@ -1802,6 +1835,8 @@ internal sealed class App : IDisposable
             if (ImGui.SliderFloat("Tolerance", ref tolerancePercent, 0f, 100f, "%.0f%%")) fillTolerance = tolerancePercent / 100f;
             ImGui.Checkbox("Contiguous", ref fillContiguous);
             ImGui.SameLine();
+            ImGui.Checkbox("All layers", ref fillAllLayers);
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Find the area to fill by what all the layers show together, not just the selected layer.");
             ImGui.TextDisabled("Shift+click: fill selection");
         }
 
@@ -1881,26 +1916,28 @@ internal sealed class App : IDisposable
             {
                 ImGui.TextColored(new Vector4(1f, 0.55f, 0.45f, 1f), "  No UVs: unwrap it in Blender to paint.");
             }
-            else if (material.TextureIndex >= 0)
-            {
-                var t = Model.Textures[material.TextureIndex];
-                ImGui.TextDisabled($"  {t.Name} {t.Width}x{t.Height}{(t.Dirty ? " (unsaved)" : "")}");
-            }
             else
             {
-                ImGui.SetNextItemWidth(70);
-                if (ImGui.BeginCombo("##size", newTextureSize.ToString()))
+                var assigned = material.TextureIndex >= 0 ? Model.Textures[material.TextureIndex] : null;
+                string current = assigned != null ? $"{assigned.Name} {assigned.Width}x{assigned.Height}{(assigned.Dirty ? " *" : "")}" : "(no texture)";
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.BeginCombo("##texture", current))
                 {
-                    foreach (int size in TextureSizes)
-                        if (ImGui.Selectable(size.ToString(), size == newTextureSize)) newTextureSize = size;
+                    for (int i = 0; i < Model.Textures.Count; i++)
+                    {
+                        var t = Model.Textures[i];
+                        if (ImGui.Selectable($"{t.Name}  {t.Width}x{t.Height}##t{i}", i == material.TextureIndex))
+                        {
+                            EndStroke();
+                            Model.AssignTexture(part.MaterialIndex, i);
+                            state.ActiveTexture = i;
+                            uvView.RequestFit();
+                        }
+                    }
+                    if (ImGui.Selectable("New texture...")) OpenNewTexture(part.MaterialIndex);
                     ImGui.EndCombo();
                 }
-                ImGui.SameLine();
-                if (ImGui.Button("New texture"))
-                {
-                    state.ActiveTexture = Model.CreateTexture(part.MaterialIndex, newTextureSize);
-                    SetStatus($"Created {Model.Textures[state.ActiveTexture].Name}; Ctrl+S saves it to {DefaultSavePath(Model.Textures[state.ActiveTexture])}", error: false);
-                }
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip("The texture this material shows and paints (in Sable only; the model file isn't changed).");
             }
             ImGui.PopID();
         }
@@ -1934,6 +1971,11 @@ internal sealed class App : IDisposable
         {
             ImGui.TextDisabled("no selection");
         }
+        ImGui.SameLine();
+        ImGui.TextDisabled("|");
+        ImGui.SameLine();
+        if (ImGui.Button("New texture...")) OpenNewTexture();
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("A new image for one of the active object's materials");
         ImGui.End();
     }
 
@@ -2107,7 +2149,7 @@ internal sealed class App : IDisposable
                     view3d.Camera.Frame(obj.Min, obj.Max);
                     foreach (int p in obj.Parts)
                         if (source.Parts[p].HasUvs && Model.TextureOf(p) < 0)
-                            state.ActiveTexture = Model.CreateTexture(source.Parts[p].MaterialIndex, 64);
+                            state.ActiveTexture = Model.CreateTexture(source.Parts[p].MaterialIndex, 64, 64);
                 }
                 foreach (var obj in source.Objects)
                     Console.WriteLine($"[selftest] {obj.Name}: {obj.Parts.Sum(p => source.Parts[p].ComponentCount)} submeshes");
@@ -2239,6 +2281,8 @@ internal sealed class App : IDisposable
                     }
                 }
 
+                if (state.ActiveTexture >= 0) SelfTestLayers(Model.Textures[state.ActiveTexture]);
+
                 tool = Tool.Brush;
                 Console.WriteLine($"[selftest] undo available: {undo.CanUndo}; dirty textures: {Model.Textures.Count(t => t.Dirty)}");
                 break;
@@ -2303,7 +2347,10 @@ internal sealed class App : IDisposable
         uvView.PixelGrid = saved.UvTexelGrid;
         uvView.ShowSiblings = saved.UvShowSiblings;
         split = Math.Clamp(saved.Split, 0.15f, 0.85f);
-        if (TextureSizes.Contains(saved.NewTextureSize)) newTextureSize = saved.NewTextureSize;
+        if (TextureSizes.Contains(saved.NewTextureSize)) newTextureWidth = saved.NewTextureSize;
+        if (TextureSizes.Contains(saved.NewTextureHeight)) newTextureHeight = saved.NewTextureHeight;
+        fillAllLayers = saved.FillAllLayers;
+        layersOpen = saved.LayersOpen;
 
         // Only restore a window placement that is still on a monitor.
         if (saved.WindowWidth >= 900 && saved.WindowHeight >= 560)
@@ -2344,7 +2391,10 @@ internal sealed class App : IDisposable
             UvTexelGrid = uvView.PixelGrid,
             UvShowSiblings = uvView.ShowSiblings,
             Split = split,
-            NewTextureSize = newTextureSize,
+            NewTextureSize = newTextureWidth,
+            NewTextureHeight = newTextureHeight,
+            FillAllLayers = fillAllLayers,
+            LayersOpen = layersOpen,
             WindowMaximized = Raylib.IsWindowMaximized(),
         };
         // Keep the un-maximized placement, so restoring from maximized goes back to it.

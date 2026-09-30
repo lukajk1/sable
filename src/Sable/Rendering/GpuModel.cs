@@ -111,18 +111,35 @@ public sealed unsafe class GpuModel : IDisposable
         partIndex < 0 ? -1 : Source.Materials[Source.Parts[partIndex].MaterialIndex].TextureIndex;
 
     /// <summary>
-    /// Gives a material a new texture filled with its colour; the material turns white so the texture shows as
-    /// painted. Every part using the material gets it, as in Blender.
+    /// Gives a material a new texture (replacing the one it had, which stays in <see cref="Textures"/>), filled with
+    /// <paramref name="fill"/>, or with the material's colour when null. The material turns white so the texture
+    /// shows as painted. Every part using the material gets it, as in Blender.
     /// </summary>
-    public int CreateTexture(int materialIndex, int size)
+    public int CreateTexture(int materialIndex, int width, int height, Color? fill = null, string? name = null)
     {
         var info = Source.Materials[materialIndex];
-        var texture = PaintTexture.Create($"{info.Name}.png", size, size, ToColor(info.Color with { W = 1 }));
+        name ??= UniqueTextureName(info.Name);
+        var texture = PaintTexture.Create(name, width, height, fill ?? ToColor(info.Color with { W = 1 }));
         Textures.Add(texture);
-        info.TextureIndex = Textures.Count - 1;
         info.Color = Vector4.One;
+        AssignTexture(materialIndex, Textures.Count - 1);
+        return Textures.Count - 1;
+    }
+
+    /// <summary>"&lt;stem&gt;.png", or "&lt;stem&gt;_2.png" and so on when a texture already has that name.</summary>
+    public string UniqueTextureName(string stem)
+    {
+        foreach (char c in Path.GetInvalidFileNameChars()) stem = stem.Replace(c, '_');
+        string name = $"{stem}.png";
+        for (int n = 2; Textures.Any(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase)); n++) name = $"{stem}_{n}.png";
+        return name;
+    }
+
+    /// <summary>Makes a material use one of the model's textures.</summary>
+    public void AssignTexture(int materialIndex, int textureIndex)
+    {
+        Source.Materials[materialIndex].TextureIndex = textureIndex;
         ApplyMaterial(materialIndex);
-        return info.TextureIndex;
     }
 
     /// <summary>Swaps in a different texture (an imported image) for texture <paramref name="index"/>.</summary>

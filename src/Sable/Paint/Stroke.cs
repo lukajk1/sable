@@ -11,20 +11,28 @@ namespace Sable.Paint;
 public sealed class Stroke
 {
     public PaintTexture Texture { get; }
+    /// <summary>The layer painted: the active one when the stroke began.</summary>
+    public Layer Layer { get; }
     /// <summary>How much each dab adds, 0..1 (set per dab, e.g. from pen pressure).</summary>
     public float Flow { get; set; } = 1f;
+    private readonly Color[] pixels;
     private readonly Color[] before;
     private readonly float[] coverage;
     private readonly Color color;
     private readonly float opacity;
     private readonly bool[]? mask;
+    private readonly bool erase;
     private int minX = int.MaxValue, minY = int.MaxValue, maxX = -1, maxY = -1;
 
     /// <param name="opacity">The ceiling for this stroke, 0..1.</param>
     /// <param name="mask">When given, only these texels can be painted (the lasso selection).</param>
-    public Stroke(PaintTexture texture, Color color, float opacity = 1f, bool[]? mask = null)
+    /// <param name="erase">Take alpha away instead of laying colour on.</param>
+    public Stroke(PaintTexture texture, Color color, float opacity = 1f, bool[]? mask = null, bool erase = false)
     {
         Texture = texture;
+        Layer = texture.ActiveLayer;
+        pixels = Layer.Pixels;
+        this.erase = erase;
         this.color = color with { A = 255 };
         this.opacity = Math.Clamp(opacity, 0f, 1f);
         this.mask = mask;
@@ -47,10 +55,26 @@ public sealed class Stroke
 
         Color from = before[i];
         float a = next * opacity;
-        Texture.Pixels[i] = a >= 0.999f
-            ? color
-            : new Color(Lerp(from.R, color.R, a), Lerp(from.G, color.G, a), Lerp(from.B, color.B, a),
-                (byte)Math.Max(from.A, (int)MathF.Round(a * 255f)));
+        if (erase)
+        {
+            pixels[i] = a >= 0.999f ? new Color(0, 0, 0, 0) : new Color(from.R, from.G, from.B, (byte)MathF.Round(from.A * (1f - a)));
+        }
+        else if (a >= 0.999f || from.A == 255)
+        {
+            pixels[i] = a >= 0.999f ? color
+                : new Color(Lerp(from.R, color.R, a), Lerp(from.G, color.G, a), Lerp(from.B, color.B, a), (byte)255);
+        }
+        else
+        {
+            // Paint over a see-through texel: its colour only counts as much as it shows, so soft edges on a
+            // transparent layer keep the paint colour instead of darkening toward the texel's hidden RGB.
+            float fromA = from.A / 255f;
+            float outA = a + fromA * (1f - a);
+            float keep = fromA * (1f - a);
+            pixels[i] = new Color(
+                (byte)MathF.Round((color.R * a + from.R * keep) / outA), (byte)MathF.Round((color.G * a + from.G * keep) / outA),
+                (byte)MathF.Round((color.B * a + from.B * keep) / outA), (byte)MathF.Round(outA * 255f));
+        }
 
         minX = Math.Min(minX, x);
         minY = Math.Min(minY, y);
@@ -65,7 +89,7 @@ public sealed class Stroke
     public UndoStep? Finish()
     {
         if (maxX < 0) return null;
-        return UndoStep.Capture(Texture, before, minX, minY, maxX - minX + 1, maxY - minY + 1);
+        return UndoStep.Capture(Texture, Layer, before, minX, minY, maxX - minX + 1, maxY - minY + 1);
     }
 }
 
@@ -78,16 +102,18 @@ public interface IUndoStep
     long Bytes { get; }
 }
 
-/// <summary>A changed rectangle of one texture, before and after.</summary>
+/// <summary>A changed rectangle of one layer of a texture, before and after.</summary>
 public sealed class UndoStep : IUndoStep
 {
     private readonly PaintTexture texture;
+    private readonly Layer layer;
     private readonly int x, y, width, height;
     private readonly Color[] before, after;
 
-    private UndoStep(PaintTexture texture, int x, int y, int width, int height, Color[] before, Color[] after)
+    private UndoStep(PaintTexture texture, Layer layer, int x, int y, int width, int height, Color[] before, Color[] after)
     {
         this.texture = texture;
+        this.layer = layer;
         this.x = x;
         this.y = y;
         this.width = width;
@@ -98,16 +124,16 @@ public sealed class UndoStep : IUndoStep
 
     public long Bytes => (before.Length + after.Length) * 4L;
 
-    public static UndoStep Capture(PaintTexture texture, Color[] fullBefore, int x, int y, int width, int height)
+    public static UndoStep Capture(PaintTexture texture, Layer layer, Color[] fullBefore, int x, int y, int width, int height)
     {
         var before = new Color[width * height];
         var after = new Color[width * height];
         for (int row = 0; row < height; row++)
         {
             Array.Copy(fullBefore, (y + row) * texture.Width + x, before, row * width, width);
-            Array.Copy(texture.Pixels, (y + row) * texture.Width + x, after, row * width, width);
+            Array.Copy(layer.Pixels, (y + row) * texture.Width + x, after, row * width, width);
         }
-        return new UndoStep(texture, x, y, width, height, before, after);
+        return new UndoStep(texture, layer, x, y, width, height, before, after);
     }
 
     public void Undo() => Write(before);
@@ -116,8 +142,8 @@ public sealed class UndoStep : IUndoStep
     private void Write(Color[] source)
     {
         for (int row = 0; row < height; row++)
-            Array.Copy(source, row * width, texture.Pixels, (y + row) * texture.Width + x, width);
-        texture.Touch();
+            Array.Copy(source, row * width, layer.Pixels, (y + row) * texture.Width + x, width);
+        texture.Touch(x, y, x + width - 1, y + height - 1);
     }
 }
 

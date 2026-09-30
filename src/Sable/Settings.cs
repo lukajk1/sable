@@ -19,6 +19,7 @@ internal sealed class Settings
     public float PressureCurve { get; set; } = 1.6f;
     public float FillTolerance { get; set; }
     public bool FillContiguous { get; set; } = true;
+    public bool FillAllLayers { get; set; }
 
     // Display.
     public int TextureView { get; set; }
@@ -28,7 +29,9 @@ internal sealed class Settings
     public bool UvTexelGrid { get; set; } = true;
     public bool UvShowSiblings { get; set; } = true;
     public float Split { get; set; } = 0.5f;
-    public int NewTextureSize { get; set; } = 64;
+    public int NewTextureSize { get; set; } = 256;
+    public int NewTextureHeight { get; set; } = 256;
+    public bool LayersOpen { get; set; } = true;
 
     // Window (0 = leave to the default).
     public int WindowX { get; set; }

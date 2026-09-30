@@ -9,6 +9,7 @@ namespace Sable.Paint;
 public sealed class SelectionMove
 {
     private readonly PaintTexture texture;
+    private readonly Layer layer;
     private readonly TexelSelection startSelection;
     private readonly Color[] before;
     private readonly Color[] underneath;
@@ -19,9 +20,10 @@ public sealed class SelectionMove
     public SelectionMove(PaintTexture texture, TexelSelection selection, bool duplicate)
     {
         this.texture = texture;
+        layer = texture.ActiveLayer;
         startSelection = selection.Clone();
-        before = (Color[])texture.Pixels.Clone();
-        underneath = (Color[])texture.Pixels.Clone();
+        before = (Color[])layer.Pixels.Clone();
+        underneath = (Color[])layer.Pixels.Clone();
         for (int y = 0; y < texture.Height; y++)
         for (int x = 0; x < texture.Width; x++)
         {
@@ -38,12 +40,12 @@ public sealed class SelectionMove
         if (placed && (dx, dy) == Offset) return;
         placed = true;
         Offset = (dx, dy);
-        Array.Copy(underneath, texture.Pixels, underneath.Length);
+        Array.Copy(underneath, layer.Pixels, underneath.Length);
         foreach (var (x, y, color) in lifted)
         {
             int nx = x + dx, ny = y + dy;
             if (nx < 0 || ny < 0 || nx >= texture.Width || ny >= texture.Height) continue;
-            texture.Pixels[ny * texture.Width + nx] = color;
+            layer.Pixels[ny * texture.Width + nx] = color;
         }
         texture.Touch();
 
@@ -53,5 +55,5 @@ public sealed class SelectionMove
 
     /// <summary>The undo step, or null if nothing moved.</summary>
     public UndoStep? Finish() =>
-        Offset == (0, 0) ? null : UndoStep.Capture(texture, before, 0, 0, texture.Width, texture.Height);
+        Offset == (0, 0) ? null : UndoStep.Capture(texture, layer, before, 0, 0, texture.Width, texture.Height);
 }

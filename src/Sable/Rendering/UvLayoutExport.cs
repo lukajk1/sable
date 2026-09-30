@@ -20,8 +20,9 @@ public static unsafe class UvLayoutExport
         if (overTexture && texture != null)
         {
             image = Raylib.GenImageColor(texture.Width, texture.Height, Color.Blank);
-            fixed (Color* pixels = texture.Pixels)
-                Buffer.MemoryCopy(pixels, image.Data, texture.Pixels.Length * 4L, texture.Pixels.Length * 4L);
+            texture.EnsureComposite();
+            fixed (Color* pixels = texture.Composite)
+                Buffer.MemoryCopy(pixels, image.Data, texture.Composite.Length * 4L, texture.Composite.Length * 4L);
             Raylib.ImageResizeNN(ref image, width, height);
         }
         else
