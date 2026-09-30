@@ -6,7 +6,7 @@ namespace PixelPainter.Views;
 
 /// <summary>
 /// The 3D view, rendered into its own texture. Blender controls while the mouse is over it:
-/// MMB orbit, Shift+MMB pan, Ctrl+MMB or wheel zoom (Alt+LMB orbits too, for laptops); 1/3/7 front, right and top
+/// MMB orbit, Shift+MMB pan, Ctrl+MMB or wheel zoom; 1/3/7 front, right and top
 /// (numpad or the number row; Ctrl for the opposite side), 2/4/6/8 step the orbit, 9 flips, 5 toggles ortho,
 /// Home frames everything (the app handles framing the selection).
 /// </summary>
@@ -38,13 +38,11 @@ public sealed class Viewport3D : IDisposable
         Hovered = hovered;
         LocalMouse = Raylib.GetMousePosition() - new Vector2(rect.X, rect.Y);
 
-        bool alt = Raylib.IsKeyDown(KeyboardKey.LeftAlt) || Raylib.IsKeyDown(KeyboardKey.RightAlt);
         bool shift = Raylib.IsKeyDown(KeyboardKey.LeftShift) || Raylib.IsKeyDown(KeyboardKey.RightShift);
         bool ctrl = Raylib.IsKeyDown(KeyboardKey.LeftControl) || Raylib.IsKeyDown(KeyboardKey.RightControl);
 
-        bool navPressed = Raylib.IsMouseButtonPressed(MouseButton.Middle) || (alt && Raylib.IsMouseButtonPressed(MouseButton.Left));
-        if (hovered && navPressed) Navigating = true;
-        if (!Raylib.IsMouseButtonDown(MouseButton.Middle) && !(alt && Raylib.IsMouseButtonDown(MouseButton.Left))) Navigating = false;
+        if (hovered && Raylib.IsMouseButtonPressed(MouseButton.Middle)) Navigating = true;
+        if (!Raylib.IsMouseButtonDown(MouseButton.Middle)) Navigating = false;
 
         if (Navigating)
         {

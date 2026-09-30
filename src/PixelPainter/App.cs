@@ -50,6 +50,11 @@ internal sealed class App : IDisposable
     private Vector2 lastDab;
     private float cursorScreenRadius = 4f;
 
+    // Eyedropper (the I tool, or holding Alt).
+    private Sample sample;
+    private bool eyedropperCursor;
+    private Vector2 eyedropperTip;
+
     // Select-tool click detection in the 3D view.
     private bool selectPressed;
     private Vector2 selectPressPosition;
@@ -134,7 +139,9 @@ internal sealed class App : IDisposable
             DrawPanel(h);
             DrawStatusBar(w, h);
             DrawColorPicker();
+            DrawEyedropper();
             rlImGui.End();
+            UpdateSystemCursor();
 
             TakeScreenshotIfDue();
             Raylib.EndDrawing();
@@ -506,13 +513,16 @@ internal sealed class App : IDisposable
     private void UpdateTools(bool free)
     {
         state.Cursor = default;
+        sample = default;
+        eyedropperCursor = false;
+        eyedropperTip = Raylib.GetMousePosition();
         if (Model == null) return;
         var source = Model.Source;
-        bool ctrl = Raylib.IsKeyDown(KeyboardKey.LeftControl) || Raylib.IsKeyDown(KeyboardKey.RightControl);
         bool alt = Raylib.IsKeyDown(KeyboardKey.LeftAlt) || Raylib.IsKeyDown(KeyboardKey.RightAlt);
         bool painting = tool is Tool.Pencil or Tool.Brush;
-        bool sampling = tool == Tool.Eyedropper || (painting && ctrl);
-        bool pressed = Raylib.IsMouseButtonPressed(MouseButton.Left) && !alt;
+        // Holding Alt turns any tool into the eyedropper until it's released.
+        bool sampling = (tool == Tool.Eyedropper || alt) && stroke == null;
+        bool pressed = Raylib.IsMouseButtonPressed(MouseButton.Left);
 
         if (stroke != null)
         {
@@ -533,10 +543,15 @@ internal sealed class App : IDisposable
                 hasHit = Raycast.Cast(source, ray.Position, ray.Direction, filter, out hit);
             }
 
+            if (sampling)
+            {
+                eyedropperCursor = true;
+                if (hasHit) sample = SampleAt(hit);
+            }
             if (painting && !sampling && hasHit) Show3DCursor(hit);
             if (pressed && stroke == null)
             {
-                if (sampling) { if (hasHit) SampleSurface(hit); }
+                if (sampling) { if (sample.Valid) SetColor(sample.Color); }
                 else if (painting)
                 {
                     if (state.ActiveObject < 0) SetStatus("Select an object to paint (V, then click it).", error: true);
@@ -560,16 +575,27 @@ internal sealed class App : IDisposable
         if (uvView.Hovered && free && state.ActiveTexture >= 0)
         {
             bool canPaint = state.ActiveObject >= 0;
+            if (sampling)
+            {
+                eyedropperCursor = true;
+                if (uvView.MouseOnTexture)
+                {
+                    var tex = Model.Textures[state.ActiveTexture];
+                    int x = (int)uvView.MouseTexel.X, y = (int)uvView.MouseTexel.Y;
+                    sample = new Sample { Valid = true, Texture = state.ActiveTexture, X = x, Y = y, Color = tex.Get(x, y) };
+                }
+            }
             if (painting && !sampling && canPaint && stroke == null) ShowUvCursor();
             if (pressed && stroke == null)
             {
-                if (sampling) SampleTexel();
+                if (sampling) { if (sample.Valid) SetColor(sample.Color); }
                 else if (painting && canPaint) BeginUv();
                 else if (painting) SetStatus("Select an object to paint (V, then click it).", error: true);
                 else if (tool == Tool.Select && state.Mode == SelectMode.Submesh) SelectInUv();
             }
         }
         if (stroke != null && !strokeIn3D && tool is Tool.Pencil or Tool.Brush) ShowUvCursor();
+        if (sampling && uvView.Hovered && free && state.ActiveTexture < 0) eyedropperCursor = true;
     }
 
     private void Show3DCursor(SurfaceHit hit)
@@ -749,8 +775,17 @@ internal sealed class App : IDisposable
         state.Submesh = null;
     }
 
+    /// <summary>What the eyedropper is over: a texel of a texture, or (Texture = -1) a plain material colour.</summary>
+    private struct Sample
+    {
+        public bool Valid;
+        public int Texture;
+        public int X, Y;
+        public Color Color;
+    }
+
     // Eyedropper: always the unlit colour, from the texture (or the material colour where there is none).
-    private void SampleSurface(SurfaceHit hit)
+    private Sample SampleAt(SurfaceHit hit)
     {
         int texture = Model!.TextureOf(hit.Part);
         var part = Model.Source.Parts[hit.Part];
@@ -758,22 +793,86 @@ internal sealed class App : IDisposable
         {
             var tex = Model.Textures[texture];
             var (x, y) = Brush.TexelAt(Model.Source, hit, new Vector2(tex.Width, tex.Height));
-            SetColor(tex.Get(x, y));
+            x = tex.Wrap(x, tex.Width);
+            y = tex.Wrap(y, tex.Height);
+            return new Sample { Valid = true, Texture = texture, X = x, Y = y, Color = tex.Get(x, y) };
         }
-        else
-        {
-            SetColor(GpuModel.ToColor(Model.Source.Materials[part.MaterialIndex].Color));
-        }
-    }
-
-    private void SampleTexel()
-    {
-        if (!uvView.MouseOnTexture) return;
-        var tex = Model!.Textures[state.ActiveTexture];
-        SetColor(tex.Get((int)uvView.MouseTexel.X, (int)uvView.MouseTexel.Y));
+        return new Sample { Valid = true, Texture = -1, Color = GpuModel.ToColor(Model.Source.Materials[part.MaterialIndex].Color with { W = 1 }) };
     }
 
     private void SetColor(Color c) => hsv = ColorWheel.RgbToHsv(new Vector3(c.R, c.G, c.B) / 255f, hsv.X);
+
+    /// <summary>Shows the system cursor, or hides it while the eyedropper draws its own.</summary>
+    private void UpdateSystemCursor()
+    {
+        if (eyedropperCursor == Raylib.IsCursorHidden()) return;
+        if (eyedropperCursor) Raylib.HideCursor();
+        else Raylib.ShowCursor();
+    }
+
+    /// <summary>
+    /// The eyedropper's pipette cursor (tip on the hot spot, bulb filled with the colour under it) and, beside it, a
+    /// loupe: the texels around the sampled one, enlarged, with the sample and the current colour side by side.
+    /// </summary>
+    private void DrawEyedropper()
+    {
+        if (!eyedropperCursor) return;
+        var draw = ImGui.GetForegroundDrawList();
+        Vector2 tip = eyedropperTip;
+        uint black = ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 1));
+        uint white = ImGui.ColorConvertFloat4ToU32(Vector4.One);
+        uint U32(Color c) => ImGui.ColorConvertFloat4ToU32(new Vector4(c.R, c.G, c.B, 255f) / 255f);
+
+        // Pipette, pointing down-left at the hot spot.
+        Vector2 dir = Vector2.Normalize(new Vector2(1, -1));
+        Vector2 neck = tip + dir * 7f, top = tip + dir * 24f, bulb = tip + dir * 30f;
+        draw.AddLine(tip, neck, black, 5f);
+        draw.AddLine(neck, top, black, 10f);
+        draw.AddLine(tip + dir * 0.5f, neck, white, 2f);
+        draw.AddLine(neck, top, white, 6f);
+        draw.AddCircleFilled(bulb, 8f, black);
+        draw.AddCircleFilled(bulb, 6f, sample.Valid ? U32(sample.Color) : white);
+
+        if (!sample.Valid) return;
+
+        const int span = 5;                // texels either side of the sampled one
+        const float cell = 12f;
+        const int count = span * 2 + 1;
+        float gridSize = count * cell;
+        float boxHeight = gridSize + 34f;
+        Vector2 at = tip + new Vector2(20f, 16f);
+        if (at.X + gridSize + 8 > Raylib.GetScreenWidth()) at.X = tip.X - 20f - gridSize;
+        if (at.Y + boxHeight + 8 > Raylib.GetScreenHeight()) at.Y = tip.Y - 16f - boxHeight;
+
+        draw.AddRectFilled(at - new Vector2(4), at + new Vector2(gridSize + 4, boxHeight), ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.1f, 0.1f, 0.95f)), 4f);
+        if (sample.Texture >= 0)
+        {
+            var tex = Model!.Textures[sample.Texture];
+            for (int dy = -span; dy <= span; dy++)
+            for (int dx = -span; dx <= span; dx++)
+            {
+                Vector2 min = at + new Vector2((dx + span) * cell, (dy + span) * cell);
+                draw.AddRectFilled(min, min + new Vector2(cell), U32(tex.Get(sample.X + dx, sample.Y + dy)));
+            }
+            Vector2 c0 = at + new Vector2(span * cell);
+            draw.AddRect(c0 - new Vector2(1), c0 + new Vector2(cell + 1), black, 0, ImDrawFlags.None, 2f);
+            draw.AddRect(c0, c0 + new Vector2(cell), white, 0, ImDrawFlags.None, 1f);
+        }
+        else
+        {
+            draw.AddRectFilled(at, at + new Vector2(gridSize), U32(sample.Color));
+            draw.AddText(at + new Vector2(6, 6), white, "material");
+        }
+
+        // New (sample) | current.
+        Vector2 swatch = at + new Vector2(0, gridSize + 5);
+        float halfWidth = gridSize * 0.5f;
+        draw.AddRectFilled(swatch, swatch + new Vector2(halfWidth, 12), U32(sample.Color));
+        draw.AddRectFilled(swatch + new Vector2(halfWidth, 0), swatch + new Vector2(gridSize, 12), U32(PaintColor));
+        var c = sample.Color;
+        string label = sample.Texture >= 0 ? $"#{c.R:X2}{c.G:X2}{c.B:X2}  {sample.X},{sample.Y}" : $"#{c.R:X2}{c.G:X2}{c.B:X2}";
+        draw.AddText(swatch + new Vector2(0, 14), white, label);
+    }
 
     // ---------- UI ----------
 
@@ -959,7 +1058,7 @@ internal sealed class App : IDisposable
             ImGui.PopID();
         }
         ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);
-        ImGui.TextWrapped("H hide, Shift+H hide others, Alt+H reveal, / local view. Ctrl+click samples a colour while painting.");
+        ImGui.TextWrapped("H hide, Shift+H hide others, Alt+H reveal, / local view. Hold Alt and click to sample a colour.");
         ImGui.PopStyleColor();
     }
 
@@ -1081,8 +1180,18 @@ internal sealed class App : IDisposable
                 openPicker = true;
                 pickerPosition = new Vector2(PanelWidth + 150, menuHeight + 170);
                 screenshotFrames = options.ScreenshotPath != null ? 3 : -1;
-                selfTestStep = -1;
                 break;
+            default:
+            {
+                // Until the screenshot: the eyedropper, as if Alt were held with the mouse mid-3D-view.
+                selfTestStep = 3;
+                var local = new Vector2(view3d.Width, view3d.Height) * 0.5f;
+                var ray = Raylib.GetScreenToWorldRayEx(local, view3d.Camera.ToRaylib(), view3d.Width, view3d.Height);
+                if (Raycast.Cast(source, ray.Position, ray.Direction, state.ObjectVisible, out var hit)) sample = SampleAt(hit);
+                eyedropperCursor = true;
+                eyedropperTip = new Vector2(PanelWidth, menuHeight) + local;
+                break;
+            }
         }
     }
 

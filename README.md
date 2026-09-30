@@ -21,7 +21,7 @@ Open models by dropping them on the window, with File > Open (Ctrl+O), or on the
 
 | Input | Action |
 | --- | --- |
-| Middle drag (or Alt + left drag) | Orbit |
+| Middle drag | Orbit (around the selection, if there is one) |
 | Shift + middle drag | Pan |
 | Wheel, or Ctrl + middle drag | Zoom |
 | 1 / 3 / 7 (numpad or number row) | Front / right / top (Ctrl: back / left / bottom) |
@@ -54,7 +54,7 @@ Painting goes to the active object only, in either view:
 | N | Pencil: exactly one texel |
 | B | Brush: round, sized in texels, with a hardness slider for the edge |
 | I | Eyedropper: the unlit texel colour (the material colour where there's no texture) |
-| Ctrl + click | Sample a colour while a paint tool is active |
+| Hold Alt, click | Eyedropper from any tool. Its cursor shows a loupe of the texels around the one under it, with the sampled and current colours side by side |
 | Q / E | Brush bigger / smaller |
 | D | Colour picker (hue ring around a saturation/value square) at the cursor; D or Esc closes it |
 | Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y | Undo, redo (per stroke) |
