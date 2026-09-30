@@ -6,9 +6,11 @@ namespace PixelPainter.Paint;
 public enum Tool { Select, Pencil, Brush, Eyedropper, Lasso }
 
 /// <summary>
-/// How the paint tools mark texels. The pencil sets exactly one texel. The brush is round, sized in texels, with a
-/// hardness from soft (0) to a hard edge (1). On the model it covers every texel whose point on the surface is inside
-/// the brush's sphere, so a dab continues across UV seams onto whichever island continues the surface.
+/// How the paint tools mark texels. The pencil sets exactly one texel, fully opaque. The brush is round, sized in
+/// texels, with a hardness from soft (0) to a hard edge (1); each texel takes the share of it the brush covers
+/// (averaged over sample points inside the texel), so even a 1-2 texel brush lays down partial, blended colour.
+/// On the model it measures distance along the surface, so a dab continues across UV seams onto whichever island
+/// continues the surface.
 /// </summary>
 public static class Brush
 {
@@ -32,10 +34,14 @@ public static class Brush
             : new Vector2(MathF.Round(texel.X), MathF.Round(texel.Y));
     }
 
+    /// <summary>Sample points per texel side: finer for small brushes, where a texel is a big share of the dab.</summary>
+    private static int Samples(float size) => size <= 16 ? 4 : 2;
+
     /// <summary>A round dab in texture space (the UV view).</summary>
     public static void DabTexels(Stroke stroke, Vector2 center, float size, float hardness)
     {
         float r = MathF.Max(size * 0.5f, 0.5f);
+        int n = Samples(size);
         int x0 = (int)MathF.Floor(center.X - r), x1 = (int)MathF.Ceiling(center.X + r);
         int y0 = (int)MathF.Floor(center.Y - r), y1 = (int)MathF.Ceiling(center.Y + r);
         var tex = stroke.Texture;
@@ -43,9 +49,14 @@ public static class Brush
         for (int x = x0; x <= x1; x++)
         {
             if (x < 0 || y < 0 || x >= tex.Width || y >= tex.Height) continue;
-            float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), center);
-            // A hair of slack so the texel under a size-1 dab always counts.
-            stroke.Apply(x, y, Falloff(d / (r + 0.001f), hardness));
+            float sum = 0;
+            for (int sy = 0; sy < n; sy++)
+            for (int sx = 0; sx < n; sx++)
+            {
+                var p = new Vector2(x + (sx + 0.5f) / n, y + (sy + 0.5f) / n);
+                sum += Falloff(Vector2.Distance(p, center) / r, hardness);
+            }
+            stroke.Apply(x, y, sum / (n * n));
         }
     }
 
@@ -85,14 +96,16 @@ public static class Brush
         var textureSize = new Vector2(tex.Width, tex.Height);
         var hitPart = model.Parts[hit.Part];
         float texelWorld = Raycast.TexelWorldSize(hitPart, hit.Triangle, textureSize);
-        if (size <= 1.01f || texelWorld <= 0)
+        if (texelWorld <= 0)
         {
+            // Degenerate UVs: nothing to measure a round brush against.
             var (tx, ty) = TexelAt(model, hit, textureSize);
             stroke.Apply(tx, ty, 1f);
             return;
         }
 
-        float radius = size * 0.5f * texelWorld;
+        float radius = MathF.Max(size * 0.5f, 0.5f) * texelWorld;
+        int n = Samples(size);
         Vector3 center = hit.Point;
         foreach (int p in model.Objects[objectIndex].Parts)
         {
@@ -134,9 +147,19 @@ public static class Brush
                         bary = Raycast.Barycentric2D(nearest, ua, ub, uc);
                     }
                     Vector3 point = a * bary.X + b * bary.Y + c * bary.Z;
-                    float d = Vector3.Distance(point, center);
-                    if (d > radius) continue;
-                    stroke.Apply(x, y, Falloff(d / radius, hardness));
+                    // Skip texels that can't reach the brush (centre farther than the radius plus a texel diagonal).
+                    if (Vector3.Distance(point, center) > radius + texelWorld * 0.75f) continue;
+
+                    // Coverage: sample points inside the texel, placed on the surface through this triangle's plane
+                    // (extrapolated past its edges, where the neighbouring triangle continues the same island).
+                    float sum = 0;
+                    for (int sy = 0; sy < n; sy++)
+                    for (int sx = 0; sx < n; sx++)
+                    {
+                        var q = Raycast.Barycentric2D(new Vector2(x + (sx + 0.5f) / n, y + (sy + 0.5f) / n), ua, ub, uc);
+                        sum += Falloff(Vector3.Distance(a * q.X + b * q.Y + c * q.Z, center) / radius, hardness);
+                    }
+                    stroke.Apply(x, y, sum / (n * n));
                 }
             }
         }

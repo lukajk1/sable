@@ -33,7 +33,8 @@ internal sealed class App : IDisposable
     // Tools and colour.
     private Tool tool = Tool.Select;
     private float brushSize = 8f;
-    private float hardness = 0.8f;
+    private float hardness = 0.5f;
+    private float opacity = 1f;
     private Vector3 hsv = new(0.07f, 0.75f, 0.9f);
     private Vector3 hsvAtPickerOpen;
     private bool openPicker, closePicker, pickerOpen;
@@ -85,6 +86,17 @@ internal sealed class App : IDisposable
         {
             var rgb = ColorWheel.HsvToRgb(hsv);
             return new Color((byte)MathF.Round(rgb.X * 255), (byte)MathF.Round(rgb.Y * 255), (byte)MathF.Round(rgb.Z * 255), (byte)255);
+        }
+    }
+
+    /// <summary>The pencil is always fully opaque; the brush uses the opacity slider.</summary>
+    private Color StrokeColor
+    {
+        get
+        {
+            var c = PaintColor;
+            if (tool == Tool.Brush) c.A = (byte)MathF.Round(Math.Clamp(opacity, 0f, 1f) * 255f);
+            return c;
         }
     }
 
@@ -784,7 +796,7 @@ internal sealed class App : IDisposable
         state.ActiveTexture = texture;
         strokeTexture = texture;
         strokeIn3D = true;
-        stroke = new Stroke(Model.Textures[texture], PaintColor, MaskFor(texture));
+        stroke = new Stroke(Model.Textures[texture], StrokeColor, MaskFor(texture));
         Dab3D(hit);
         lastMouse = view3d.LocalMouse;
     }
@@ -826,7 +838,7 @@ internal sealed class App : IDisposable
     {
         strokeTexture = state.ActiveTexture;
         strokeIn3D = false;
-        stroke = new Stroke(Model!.Textures[strokeTexture], PaintColor, MaskFor(strokeTexture));
+        stroke = new Stroke(Model!.Textures[strokeTexture], StrokeColor, MaskFor(strokeTexture));
         if (tool == Tool.Pencil)
         {
             lastTexel = ((int)MathF.Floor(uvView.MouseTexel.X), (int)MathF.Floor(uvView.MouseTexel.Y));
@@ -1129,6 +1141,8 @@ internal sealed class App : IDisposable
         ImGui.SetNextItemWidth(150);
         ImGui.SliderFloat("Hardness", ref hardness, 0f, 1f, "%.2f");
         ImGui.SetNextItemWidth(150);
+        ImGui.SliderFloat("Opacity (brush)", ref opacity, 0.02f, 1f, "%.2f");
+        ImGui.SetNextItemWidth(150);
         ImGui.SliderFloat("Lighting", ref view3d.Shade, 0f, 1f, view3d.Shade <= 0 ? "flat" : "%.2f");
     }
 
@@ -1307,6 +1321,17 @@ internal sealed class App : IDisposable
                         if (!selection.Mask[i] && tex.Pixels[i] is { R: 255, G: 255, B: 0 }) yellowOutside++;
                     Console.WriteLine($"[selftest] lasso selected {selected} texels, moved to {selection.Mask.Count(m => m)}; masked dab texels outside selection: {yellowOutside}");
                 }
+
+                // Small soft brushes should lay down partial colour, not solid texels.
+                foreach (float testSize in new[] { 1f, 2f })
+                {
+                    using var probe = PaintTexture.Create("probe", 8, 8, new Color(0, 0, 0, 255));
+                    var probeStroke = new Stroke(probe, new Color(255, 255, 255, 255));
+                    Brush.DabTexels(probeStroke, Brush.SnapCenter(new Vector2(4.2f, 4.2f), testSize), testSize, 0.5f);
+                    var rows = Enumerable.Range(3, 3).Select(y => string.Join(" ", Enumerable.Range(3, 3).Select(x => probe.Get(x, y).R.ToString().PadLeft(3))));
+                    Console.WriteLine($"[selftest] size {testSize} soft dab, grey 0-255 around the centre: {string.Join(" | ", rows)}");
+                }
+
                 tool = Tool.Brush;
                 Console.WriteLine($"[selftest] undo available: {undo.CanUndo}; dirty textures: {Model.Textures.Count(t => t.Dirty)}");
                 break;

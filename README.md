@@ -51,8 +51,8 @@ Painting goes to the active object only, in either view:
 | Input | Action |
 | --- | --- |
 | V | Select tool |
-| N | Pencil: exactly one texel |
-| B | Brush: round, sized in texels, with a hardness slider for the edge |
+| N | Pencil: exactly one texel, fully opaque |
+| B | Brush: round and soft, sized in texels, with hardness (edge) and opacity sliders. Each texel takes the share of it the brush covers, so even a 1-2 texel brush blends partial colour |
 | I | Eyedropper: the unlit texel colour (the material colour where there's no texture) |
 | Hold Alt | Eyedropper from any tool: hover a colour and let go of Alt to take it (no click). Its cursor shows a loupe of the texels around the one under it, with the sampled and current colours side by side |
 | X | Lasso (UV view): drag to select texels, Shift adds, Ctrl subtracts; drag inside the selection to move those texels (leaves them transparent), Ctrl+drag to move a copy; click outside, Ctrl+D or Esc to deselect. Painting stays inside the selection |
