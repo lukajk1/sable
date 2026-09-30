@@ -140,6 +140,8 @@ internal sealed partial class App
             else state.Selection = null;
         }
         LoadLayers(added);
+        Console.WriteLine($"[link] revision {source.LinkRevision}: {source.Objects.Count} objects, {source.Parts.Sum(p => p.TriangleCount)} tris, "
+                          + $"bounds {source.Min:0.000} .. {source.Max:0.000}, textures kept {fresh.Textures.Count(t => !added.Contains(t))}");
 
         SetStatus($"Updated from Blender (revision {source.LinkRevision}): {source.Objects.Count} object{(source.Objects.Count == 1 ? "" : "s")}, "
                   + $"{source.Parts.Sum(p => p.TriangleCount)} tris", error: false);

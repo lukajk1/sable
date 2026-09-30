@@ -1,0 +1,19 @@
+schema_version = "1.0.0"
+
+id = "sable_link"
+version = "0.1.0"
+name = "Sable Link"
+tagline = "Live-link selected meshes into the Sable texture painter"
+maintainer = "Luka"
+type = "add-on"
+
+tags = ["Import-Export", "Paint"]
+
+blender_version_min = "4.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+[permissions]
+files = "Writes meshes to a temp folder and reads painted images"

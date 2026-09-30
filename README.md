@@ -30,6 +30,19 @@ Settings stay in `%APPDATA%\Sable`, and `.blend` files still need Blender instal
 
 For a scripted install: `SableSetup-<version>.exe /VERYSILENT /CURRENTUSER`. From Git Bash, prefix it with `MSYS_NO_PATHCONV=1`, or Bash turns the `/` switches into paths and the wizard opens instead.
 
+## Blender link
+
+The Sable Link add-on (`blender/sable_link`, Blender 4.2 and later, tested on 5.2) sends the selected objects to their own Sable window and keeps it up to date:
+
+1. **Install:** `python blender/build.py` makes `blender/dist/sable_link-<version>.zip`. Install it in Blender under Edit > Preferences > Get Extensions > Install from Disk, and enable Sable Link.
+2. **Send:** select the mesh objects, then use Object > Send to Sable, the Sable tab in the 3D view's sidebar (N), or F3 "Send to Sable". The first send opens a new Sable window for them; sending again replaces what's linked, in the same window.
+3. **Edit in Blender:** geometry, UVs, modifiers, transforms and materials of the linked objects go to Sable about half a second after you stop, Edit Mode included. Sable swaps the new geometry in and keeps everything painted: textures, layers, the active object and the paint undo history (hide/reveal steps are dropped). The camera doesn't move.
+4. **Paint and save in Sable:** Ctrl+S writes each texture to the image file its material reads in the .blend, and the add-on reloads those images in Blender, so the viewport shows the paint. Textures made in Sable save next to the .blend as `<blend>_<texture>.png`; hook them up to the material in Blender.
+
+Stop link (in the Sable tab) ends the updates; Sable says so and keeps running. Opening another .blend also stops it.
+
+**How it works:** Blender writes the linked objects to `%TEMP%\Sable\link\<blend>-<id>\model.glb` (its own quick exporter: evaluated meshes, world transforms baked in, one primitive per material, no images), then `link.json` with a revision number, the .blend's path and the image file of each material. Sable is started as `Sable --link <link.json>`, checks the revision four times a second, and loads a newer one in the background. Ctrl+R reloads it by hand. The add-on finds Sable in its preferences, then the installed copy (`%LOCALAPPDATA%\Programs\Sable`, or the installer's registry entry).
+
 ## The window
 
 - **Panel (left):** tools, colour, brush settings, display options, the object list, the active object's materials and textures, textures and warnings.
@@ -192,6 +205,8 @@ Sable --check model
 | `--selftest` | Before the screenshot, run checks: test strokes, fill, box and lasso selection, flow build-up, hide undo, UV export and re-import, layers (blend modes, opacity, eraser, soft paint on a transparent layer, undo, the layer file round trip, merge down), and resizing (2x nearest stays exact; a stroke after a resize and the resize both undo; redo). They print to the console; nothing is saved next to the model (the layer file test writes to `%TEMP%\Sable\selftest`) |
 | `--frames N` | Quit after N frames, saving settings as a normal close does |
 | `--check model` | Print each submesh's triangles, flipped faces (winding against the normals), zero-area UVs and bounds, and which materials' UVs overlap; then quit. For finding out why part of a model won't paint |
+| `--link link.json` | Open a Blender link (the add-on does this) |
+| `--linktest` | With `--link`: paint a texel, bump the link's revision as Blender would, check the paint and undo survive the update; print and quit |
 | `--bench` | On the textured object with the most triangles, time hover ray casts, 3D strokes (pencil and brushes of 8, 32 and 96 texels), a UV stroke, stroke setup and texture upload; print them and quit |
 
 Environment: `SABLE_BLENDER` (the Blender to use), `SABLE_SETTINGS` (a different settings file, for tests).
@@ -206,6 +221,7 @@ Environment: `SABLE_BLENDER` (the Blender to use), `SABLE_SETTINGS` (a different
 - `Input/`: pen input from Windows Ink (`PenInput`).
 - `Diagnostics/`: the frame profiler behind the hitch log, and the `--bench` table.
 - `assets/icon/`: the app icon (`sable.svg`, PNG sizes, `sable.ico`).
+- `blender/`: the Sable Link add-on (`sable_link/`: `exporter.py` writes the GLB, `link.py` watches and launches) and its `build.py`. Sable's side is `Model/BlenderLink.cs` and `App.Link.cs`.
 - `installer/`: the Inno Setup script (`sable.iss`) and `build.py`.
 - `App.cs`: the window, tools, selection and panels. `App.Layers.cs`: the Layers window, the New texture dialog and the layer keys. `EditorState.cs`: what's selected and shown. `Settings.cs`: what persists. `Program.cs`: the command line.
 

@@ -6,3 +6,4 @@ obj/
 imgui.ini
 installer/publish/
 installer/output/
+blender/dist/
