@@ -82,6 +82,10 @@ Saving writes each changed texture back to its file. For a `.blend`, that is the
 
 Settings are kept between sessions in `%APPDATA%\Sable\settings.json`: colour, brush size, hardness, opacity, flow, the pressure options, texture view, lighting, grid, wireframe, the UV view toggles, the split between the views, the new-texture size and the window. The scene isn't (camera, selection, hidden objects), and the tool always starts as Select. `--frames N` quits after N frames, saving settings as a normal close does; `SABLE_SETTINGS` points at a different settings file.
 
+File > Import image into texture replaces the active texture's pixels with an image (resizing the texture to it); Ctrl+S still saves to the texture's own file. File > Export texture as writes a PNG copy without changing that. File > Export UV layout writes the UV wireframe the UV view shows, at 1x to 8x the texture size, as black lines on transparent or white lines over the texture: a template for painting elsewhere, like Blender's Export UV Layout.
+
+File dialogs run in a separate helper process (`Sable.exe --pick ...`), because shell extensions that inject into them can crash (SHADE Sandbox's shade.dll did); then only the helper dies. File > Open path takes a pasted path instead, and dropping files on the window always works.
+
 Ctrl+R reloads the model from disk.
 
 ## Layout

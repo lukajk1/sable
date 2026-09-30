@@ -202,6 +202,7 @@ internal sealed class App : IDisposable
         while (!Raylib.WindowShouldClose() && !quit)
         {
             FinishLoad();
+            FinishPick();
             HandleDroppedFiles();
             profiler.Mark("load");
 
@@ -252,6 +253,7 @@ internal sealed class App : IDisposable
             DrawPanel(h);
             DrawStatusBar(w, h);
             DrawUvToolbar();
+            DrawOpenPathPopup();
             DrawColorPicker();
             DrawToolCursor();
             ImGui.PopItemFlag();
@@ -424,15 +426,129 @@ internal sealed class App : IDisposable
         else if (files.Length > 0) SetStatus($"Not a supported model: {Path.GetFileName(files[0])}", error: true);
     }
 
-    private void OpenDialog()
+    // A file dialog open in the helper process, and what to do with its answer.
+    private Task<string?>? picking;
+    private Action<string>? onPicked;
+    private bool openPathPopup;
+    private string pathInput = "";
+
+    private string? ModelDirectory => Model != null ? Path.GetDirectoryName(Model.Source.SourcePath) : null;
+
+    private void Pick(bool save, string title, string filter, string? fileName, Action<string> then)
     {
-        profiler.Skip();
-        using var dialog = new System.Windows.Forms.OpenFileDialog
+        if (picking != null) return;
+        picking = FileDialogs.PickAsync(save, title, filter, ModelDirectory, fileName);
+        onPicked = then;
+        SetStatus($"{title}: waiting for the file dialog...", error: false);
+    }
+
+    private void FinishPick()
+    {
+        if (picking is not { IsCompleted: true } task) return;
+        picking = null;
+        var then = onPicked;
+        onPicked = null;
+        if (task.IsFaulted)
         {
-            Title = "Open model",
-            Filter = "Models|*.fbx;*.gltf;*.glb;*.obj;*.blend;*.dae;*.3ds;*.ply|All files|*.*",
-        };
-        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK) StartLoad(dialog.FileName);
+            SetStatus((task.Exception!.InnerException ?? task.Exception).Message, error: true);
+            return;
+        }
+        if (task.Result is not { } path)
+        {
+            SetStatus("Cancelled.", error: false);
+            return;
+        }
+        try { then?.Invoke(path); }
+        catch (Exception e) { SetStatus(e.Message, error: true); }
+    }
+
+    private void OpenDialog() => Pick(false, "Open model", FileDialogs.ModelFilter, null, StartLoad);
+
+    /// <summary>Replaces the active texture's pixels with an image file; it still saves to its own file.</summary>
+    private void ImportImage()
+    {
+        if (Model == null || state.ActiveTexture < 0) return;
+        int index = state.ActiveTexture;
+        Pick(false, "Import image into texture", FileDialogs.ImageFilter, null, path =>
+        {
+            var old = Model.Textures[index];
+            var image = PaintTexture.FromEncoded(old.Name, Path.GetExtension(path).ToLowerInvariant(), File.ReadAllBytes(path), old.FilePath);
+            if (image.Width == 1 && image.Height == 1 && new FileInfo(path).Length > 200)
+            {
+                image.Dispose();
+                throw new InvalidOperationException($"Couldn't read {Path.GetFileName(path)} as an image.");
+            }
+            EndStroke();
+            image.Dirty = true;
+            Model.ReplaceTexture(index, image);
+            // Undo steps point at the old pixels, and a selection at the old size.
+            undo.Clear();
+            if (state.Selection?.Texture == index) state.Selection = null;
+            uvView.RequestFit();
+            SetStatus($"Imported {Path.GetFileName(path)} ({image.Width}x{image.Height}) into {old.Name}; Ctrl+S saves it.", error: false);
+        });
+    }
+
+    private void ExportTexture()
+    {
+        if (Model == null || state.ActiveTexture < 0) return;
+        var texture = Model.Textures[state.ActiveTexture];
+        Pick(true, "Export texture", FileDialogs.PngFilter, Path.ChangeExtension(texture.Name, ".png"), path =>
+        {
+            texture.ExportTo(path);
+            SetStatus($"Exported {texture.Name} to {path}", error: false);
+        });
+    }
+
+    /// <summary>Writes the UV layout the UV view shows (the active object's, or everything on the texture).</summary>
+    private void ExportUvLayout(int scale, bool overTexture)
+    {
+        if (Model == null) return;
+        int texture = state.ActiveTexture;
+        var parts = Enumerable.Range(0, Model.Source.Parts.Count)
+            .Where(p => state.PartVisible(p) && Model.Source.Parts[p].HasUvs)
+            .Where(p => state.ActiveObject < 0 || Model.Source.Parts[p].ObjectIndex == state.ActiveObject)
+            .Where(p => texture < 0 || Model.TextureOf(p) == texture)
+            .ToList();
+        if (parts.Count == 0)
+        {
+            SetStatus("Nothing with UVs to export: select an object with UVs.", error: true);
+            return;
+        }
+        string stem = texture >= 0 ? Path.GetFileNameWithoutExtension(Model.Textures[texture].Name)
+            : state.ActiveObject >= 0 ? Model.Source.Objects[state.ActiveObject].Name : Path.GetFileNameWithoutExtension(Model.Source.Name);
+        var size = uvView.TextureSize;
+        Pick(true, "Export UV layout", FileDialogs.PngFilter, $"{stem}_uv.png", path =>
+        {
+            UvLayoutExport.Export(Model, parts, size, texture >= 0 ? Model.Textures[texture] : null, scale, overTexture, path);
+            SetStatus($"Exported the UV layout ({size.X * scale:0}x{size.Y * scale:0}) to {path}", error: false);
+        });
+    }
+
+    private void DrawOpenPathPopup()
+    {
+        if (openPathPopup)
+        {
+            ImGui.OpenPopup("Open path");
+            openPathPopup = false;
+        }
+        ImGui.SetNextWindowSize(new Vector2(560, 0));
+        bool open = true;
+        if (!ImGui.BeginPopupModal("Open path", ref open, ImGuiWindowFlags.NoResize)) return;
+        ImGui.TextWrapped("Paste the path of a model (fbx, gltf, glb, obj, blend...):");
+        ImGui.SetNextItemWidth(-1);
+        if (ImGui.IsWindowAppearing()) ImGui.SetKeyboardFocusHere();
+        bool go = ImGui.InputText("##path", ref pathInput, 1024, ImGuiInputTextFlags.EnterReturnsTrue);
+        go |= ImGui.Button("Open");
+        ImGui.SameLine();
+        if (ImGui.Button("Cancel")) ImGui.CloseCurrentPopup();
+        if (go)
+        {
+            string path = pathInput.Trim().Trim('"');
+            if (File.Exists(path)) { StartLoad(path); ImGui.CloseCurrentPopup(); }
+            else SetStatus($"No file at {path}", error: true);
+        }
+        ImGui.EndPopup();
     }
 
     private void Reload()
@@ -1490,8 +1606,24 @@ internal sealed class App : IDisposable
         if (ImGui.BeginMenu("File"))
         {
             if (ImGui.MenuItem("Open...", "Ctrl+O")) OpenDialog();
+            if (ImGui.MenuItem("Open path...")) openPathPopup = true;
             if (ImGui.MenuItem("Reload", "Ctrl+R", false, Model != null)) Reload();
             if (ImGui.MenuItem("Save textures", "Ctrl+S", false, Model != null)) SaveAll();
+            ImGui.Separator();
+            bool hasTexture = Model != null && state.ActiveTexture >= 0;
+            if (ImGui.MenuItem("Import image into texture...", null, false, hasTexture)) ImportImage();
+            if (ImGui.MenuItem("Export texture as...", null, false, hasTexture)) ExportTexture();
+            if (ImGui.BeginMenu("Export UV layout", Model != null))
+            {
+                foreach (bool over in new[] { false, true })
+                {
+                    ImGui.TextDisabled(over ? "Over the texture" : "Lines only (transparent)");
+                    foreach (int scale in new[] { 1, 2, 4, 8 })
+                        if (ImGui.MenuItem($"  {scale}x  ({uvView.TextureSize.X * scale:0}x{uvView.TextureSize.Y * scale:0})##{over}{scale}", null, false, !over || hasTexture))
+                            ExportUvLayout(scale, over);
+                }
+                ImGui.EndMenu();
+            }
             ImGui.Separator();
             if (ImGui.MenuItem("Quit")) quit = true;
             ImGui.EndMenu();
@@ -1926,6 +2058,20 @@ internal sealed class App : IDisposable
                     var box = new TexelSelection(0, 8, 8);
                     box.Apply(BoxPolygon(new Vector2(1.2f, 1.7f), new Vector2(3.9f, 2.1f)), SelectionOp.Replace);
                     Console.WriteLine($"[selftest] box select covers {box.Mask.Count(m => m)} texels (expect 6)");
+                }
+
+                // UV layout export at 4x, lines only and over the texture, then import one back as an image.
+                if (state.ActiveTexture >= 0)
+                {
+                    string dir = Path.Combine(Path.GetTempPath(), "Sable", "selftest");
+                    var tex = Model.Textures[state.ActiveTexture];
+                    var parts = source.Objects[state.ActiveObject].Parts.Where(p => source.Parts[p].HasUvs).ToList();
+                    var size = new Vector2(tex.Width, tex.Height);
+                    UvLayoutExport.Export(Model, parts, size, tex, 4, false, Path.Combine(dir, "uv_lines.png"));
+                    UvLayoutExport.Export(Model, parts, size, tex, 4, true, Path.Combine(dir, "uv_over.png"));
+                    using var imported = PaintTexture.FromEncoded("imported", ".png", File.ReadAllBytes(Path.Combine(dir, "uv_over.png")), null);
+                    int lineTexels = imported.Pixels.Count(c => c is { R: 255, G: 255, B: 255 });
+                    Console.WriteLine($"[selftest] UV export: {dir}; re-imported {imported.Width}x{imported.Height} (expect {tex.Width * 4}x{tex.Height * 4}), {lineTexels} white line pixels");
                 }
 
                 tool = Tool.Brush;

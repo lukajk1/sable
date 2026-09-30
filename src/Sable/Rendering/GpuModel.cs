@@ -125,6 +125,15 @@ public sealed unsafe class GpuModel : IDisposable
         return info.TextureIndex;
     }
 
+    /// <summary>Swaps in a different texture (an imported image) for texture <paramref name="index"/>.</summary>
+    public void ReplaceTexture(int index, PaintTexture replacement)
+    {
+        Textures[index].Dispose();
+        Textures[index] = replacement;
+        for (int m = 0; m < Source.Materials.Count; m++)
+            if (Source.Materials[m].TextureIndex == index) ApplyMaterial(m);
+    }
+
     public void UploadTextures()
     {
         foreach (var texture in Textures) texture.Upload();

@@ -154,7 +154,16 @@ public sealed unsafe class PaintTexture : IDisposable
         return (strokeBefore, strokeCoverage);
     }
 
+    /// <summary>Writes the texture and makes <paramref name="path"/> where it saves from now on.</summary>
     public void Save(string path)
+    {
+        ExportTo(path);
+        FilePath = path;
+        Dirty = false;
+    }
+
+    /// <summary>Writes a copy, leaving where the texture saves (and its unsaved state) alone.</summary>
+    public void ExportTo(string path)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         fixed (Color* data = Pixels)
@@ -162,8 +171,6 @@ public sealed unsafe class PaintTexture : IDisposable
             var image = new Image { Data = data, Width = Width, Height = Height, Mipmaps = 1, Format = PixelFormat.UncompressedR8G8B8A8 };
             if (!Raylib.ExportImage(image, path)) throw new IOException($"Couldn't write {path}");
         }
-        FilePath = path;
-        Dirty = false;
     }
 
     public void Dispose() => Raylib.UnloadTexture(Gpu);

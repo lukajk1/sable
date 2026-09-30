@@ -2,13 +2,15 @@ namespace Sable;
 
 internal static class Program
 {
-    // STA for the WinForms open dialog.
+    // STA for the WinForms file dialogs (shown by the --pick helper process).
     [STAThread]
-    private static void Main(string[] args)
+    private static int Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--pick") return FileDialogs.RunPicker(args);
         var options = AppOptions.Parse(args);
         using var app = new App(options);
         app.Run();
+        return 0;
     }
 }
 
