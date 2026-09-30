@@ -73,6 +73,15 @@ public sealed class OrbitCamera
 
     public void Zoom(float factor) => Distance = Math.Clamp(Distance * factor, 0.0005f, 1e6f);
 
+    /// <summary>Zooms keeping <paramref name="focus"/> where it is on screen (the scrubby zoom).</summary>
+    public void ZoomAbout(Vector3 focus, float factor)
+    {
+        float next = Math.Clamp(Distance * factor, 0.0005f, 1e6f);
+        factor = next / Distance;
+        Pivot = focus + (Pivot - focus) * factor;
+        Distance = next;
+    }
+
     public void Frame(Vector3 min, Vector3 max)
     {
         Pivot = (min + max) * 0.5f;

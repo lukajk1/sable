@@ -3,7 +3,7 @@ using Sable.Model;
 
 namespace Sable.Paint;
 
-public enum Tool { Select, Pencil, Brush, Eyedropper, Lasso }
+public enum Tool { Select, Pencil, Brush, Eyedropper, Fill, Zoom, Lasso, BoxSelect }
 
 /// <summary>
 /// How the paint tools mark texels. The pencil sets exactly one texel, fully opaque. The brush is round, sized in
@@ -66,6 +66,64 @@ public static class Brush
             }
             stroke.Apply(x, y, sum / (n * n));
         }
+    }
+
+    /// <summary>
+    /// Bucket fill from texel (<paramref name="x"/>, <paramref name="y"/>): every texel within
+    /// <paramref name="tolerance"/> (0..1, the largest channel difference) of its colour, either only those connected
+    /// to it through 4-way neighbours or, with <paramref name="contiguous"/> off, all of them. The stroke's mask (a
+    /// selection) limits it; clicking outside the selection fills nothing.
+    /// </summary>
+    public static void Flood(Stroke stroke, int x, int y, float tolerance, bool contiguous, bool[]? mask)
+    {
+        var tex = stroke.Texture;
+        int w = tex.Width, h = tex.Height;
+        if (x < 0 || y < 0 || x >= w || y >= h) return;
+        if (mask != null && !mask[y * w + x]) return;
+
+        var pixels = tex.Pixels;
+        var target = pixels[y * w + x];
+        int limit = (int)MathF.Round(Math.Clamp(tolerance, 0f, 1f) * 255f);
+        bool Matches(int i)
+        {
+            var c = pixels[i];
+            return (mask == null || mask[i])
+                   && Math.Abs(c.R - target.R) <= limit && Math.Abs(c.G - target.G) <= limit
+                   && Math.Abs(c.B - target.B) <= limit && Math.Abs(c.A - target.A) <= limit;
+        }
+
+        // Collect first: painting as we go would change what later texels are compared against.
+        var fill = new List<int>();
+        if (!contiguous)
+        {
+            for (int i = 0; i < pixels.Length; i++)
+                if (Matches(i)) fill.Add(i);
+        }
+        else
+        {
+            var seen = new bool[pixels.Length];
+            var queue = new Queue<int>();
+            queue.Enqueue(y * w + x);
+            seen[y * w + x] = true;
+            while (queue.Count > 0)
+            {
+                int i = queue.Dequeue();
+                fill.Add(i);
+                int cx = i % w, cy = i / w;
+                if (cx > 0) Visit(i - 1);
+                if (cx < w - 1) Visit(i + 1);
+                if (cy > 0) Visit(i - w);
+                if (cy < h - 1) Visit(i + w);
+            }
+
+            void Visit(int n)
+            {
+                if (seen[n] || !Matches(n)) return;
+                seen[n] = true;
+                queue.Enqueue(n);
+            }
+        }
+        foreach (int i in fill) stroke.Apply(i % w, i / w, 1f);
     }
 
     /// <summary>Texels along a line, Bresenham-style (pencil drags in the UV view).</summary>

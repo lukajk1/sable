@@ -68,6 +68,15 @@ public sealed class UvView : IDisposable
         MouseTexel = (local - offset) / zoom;
     }
 
+    /// <summary>Zooms by <paramref name="factor"/> (above 1 zooms in) keeping the texel under a window position still.</summary>
+    public void ZoomAt(Vector2 screen, float factor)
+    {
+        Vector2 local = screen - origin;
+        Vector2 texel = (local - offset) / zoom;
+        zoom = Math.Clamp(zoom * factor, 0.05f, 256f);
+        offset = local - texel * zoom;
+    }
+
     /// <summary>A window position in texels of the shown texture.</summary>
     public Vector2 ScreenToTexel(Vector2 screen) => (screen - origin - offset) / zoom;
 

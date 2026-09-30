@@ -44,6 +44,15 @@ internal sealed class App : IDisposable
     private bool pressureToSize;
     private float pressureCurve = 1.6f;
     private float lastPressure = 1f;
+    private float fillTolerance;
+    private bool fillContiguous = true;
+    // Scrubby zoom: drag right to zoom in, left to zoom out, about where the drag started.
+    private enum ZoomDrag { None, View3D, Uv }
+    private ZoomDrag zoomDrag;
+    private Vector3 zoomFocus;
+    private Vector2 zoomAnchor;
+    private float lastZoomX, zoomTravel;
+    private Rectangle uvRect;
     /// <summary>Texture sampling in the 3D view; the UV view always shows exact texels.</summary>
     private TextureView textureView = TextureView.Pixel;
     private float dabSize = 8f;
@@ -199,6 +208,7 @@ internal sealed class App : IDisposable
             float w = Raylib.GetScreenWidth(), h = Raylib.GetScreenHeight();
             var area = new Rectangle(PanelWidth, menuHeight, w - PanelWidth, h - menuHeight - StatusHeight);
             var (rect3d, rectUv, splitter) = SplitArea(area);
+            uvRect = rectUv;
 
             var io = ImGui.GetIO();
             UpdatePointer();
@@ -241,6 +251,7 @@ internal sealed class App : IDisposable
             DrawMenu();
             DrawPanel(h);
             DrawStatusBar(w, h);
+            DrawUvToolbar();
             DrawColorPicker();
             DrawToolCursor();
             ImGui.PopItemFlag();
@@ -517,9 +528,15 @@ internal sealed class App : IDisposable
         if (Raylib.IsKeyPressed(KeyboardKey.B)) tool = Tool.Brush;
         if (Raylib.IsKeyPressed(KeyboardKey.I)) tool = Tool.Eyedropper;
         if (Raylib.IsKeyPressed(KeyboardKey.X)) tool = Tool.Lasso;
+        if (Raylib.IsKeyPressed(KeyboardKey.M)) tool = Tool.BoxSelect;
+        if (Raylib.IsKeyPressed(KeyboardKey.G)) tool = Tool.Fill;
         if (Pressed(KeyboardKey.W)) brushSize = brushSize < 4 ? brushSize + 1 : MathF.Min(MathF.Round(brushSize * 1.25f), 256);
         if (Pressed(KeyboardKey.Q)) brushSize = brushSize <= 4 ? MathF.Max(brushSize - 1, 1) : MathF.Round(brushSize / 1.25f);
-        if (Raylib.IsKeyPressed(KeyboardKey.Z)) view3d.Wireframe = !view3d.Wireframe;
+        if (Raylib.IsKeyPressed(KeyboardKey.Z))
+        {
+            if (shift) view3d.Wireframe = !view3d.Wireframe;
+            else tool = Tool.Zoom;
+        }
         if (Raylib.IsKeyPressed(KeyboardKey.H)) { if (alt) Reveal(); else if (shift) HideUnselected(); else HideSelected(); }
         if (Raylib.IsKeyPressed(KeyboardKey.Slash) || Raylib.IsKeyPressed(KeyboardKey.KpDivide)) ToggleLocalView();
         if (view3d.Hovered && (Raylib.IsKeyPressed(KeyboardKey.F) || Raylib.IsKeyPressed(KeyboardKey.KpDecimal)))
@@ -675,11 +692,15 @@ internal sealed class App : IDisposable
         {
             case Tool.Pencil: return CursorIcon.Pencil;
             case Tool.Brush: return CursorIcon.Brush;
+            case Tool.Fill: return CursorIcon.Fill;
+            case Tool.Zoom: return CursorIcon.Zoom;
             case Tool.Lasso:
+            case Tool.BoxSelect:
                 bool shift = Raylib.IsKeyDown(KeyboardKey.LeftShift) || Raylib.IsKeyDown(KeyboardKey.RightShift);
                 bool overSelection = uvView.Hovered && !shift && state.ActiveSelection is { } selection
                     && selection.Contains((int)MathF.Floor(uvView.MouseTexel.X), (int)MathF.Floor(uvView.MouseTexel.Y));
-                return lassoDrag == LassoDrag.Moving || (lassoDrag == LassoDrag.None && overSelection) ? CursorIcon.Move : CursorIcon.Lasso;
+                if (lassoDrag == LassoDrag.Moving || (lassoDrag == LassoDrag.None && overSelection)) return CursorIcon.Move;
+                return tool == Tool.Lasso ? CursorIcon.Lasso : CursorIcon.Box;
             default: return CursorIcon.System;
         }
     }
@@ -693,6 +714,7 @@ internal sealed class App : IDisposable
         bool sampling = (tool == Tool.Eyedropper || alt) && stroke == null && lassoDrag == LassoDrag.None;
         bool pressed = pointerPressed;
 
+        UpdateZoom(free, pressed && !sampling);
         UpdateLasso(free, pressed && !sampling);
 
         if (stroke != null)
@@ -711,7 +733,7 @@ internal sealed class App : IDisposable
         {
             SurfaceHit hit = default;
             bool hasHit = false;
-            if (painting || sampling)
+            if (painting || sampling || tool == Tool.Fill)
             {
                 var ray = view3d.MouseRay();
                 Func<int, bool> filter = sampling ? state.ObjectVisible : i => i == state.ActiveObject && state.ObjectVisible(i);
@@ -745,7 +767,13 @@ internal sealed class App : IDisposable
                     selectPressPosition = view3d.LocalMouse;
                     if (!ObjectUnderMouse()) view3d.BeginLeftDragNavigation();
                 }
-                else if (tool == Tool.Lasso)
+                else if (tool == Tool.Fill)
+                {
+                    if (hasHit) FillFrom(hit);
+                    else if (!ObjectUnderMouse()) view3d.BeginLeftDragNavigation();
+                    else if (state.ActiveObject < 0) SetStatus("Select an object to fill (V, then click it).", error: true);
+                }
+                else if (tool is Tool.Lasso or Tool.BoxSelect)
                 {
                     if (ObjectUnderMouse()) SetStatus("The lasso works in the UV view.", error: false);
                     else view3d.BeginLeftDragNavigation();
@@ -783,6 +811,9 @@ internal sealed class App : IDisposable
                 if (sampling) { if (sample.Valid) SetColor(sample.Color); }
                 else if (painting && canPaint) BeginUv();
                 else if (painting) SetStatus("Select an object to paint (V, then click it).", error: true);
+                else if (tool == Tool.Fill && canPaint && uvView.MouseOnTexture)
+                    FillFrom(state.ActiveTexture, (int)MathF.Floor(uvView.MouseTexel.X), (int)MathF.Floor(uvView.MouseTexel.Y));
+                else if (tool == Tool.Fill) SetStatus("Select an object to fill (V, then click it).", error: true);
                 else if (tool == Tool.Select && state.Mode == SelectMode.Submesh) SelectInUv();
             }
         }
@@ -799,8 +830,9 @@ internal sealed class App : IDisposable
     private Vector2 moveStart;
 
     /// <summary>
-    /// The lasso, in the UV view: drag to draw a selection (Shift adds, Ctrl subtracts); drag inside it to move the
-    /// selected texels (Ctrl+drag moves a copy); a click outside it deselects.
+    /// The lasso and box select, in the UV view: drag to draw a selection (Shift adds, Ctrl subtracts); drag inside
+    /// it to move the selected texels (Ctrl+drag moves a copy); a click outside it deselects. The box snaps to whole
+    /// texels.
     /// </summary>
     private void UpdateLasso(bool free, bool pressed)
     {
@@ -809,7 +841,12 @@ internal sealed class App : IDisposable
         {
             if (pointerDown)
             {
-                if (Vector2.Distance(state.Lasso[^1], mouse) >= 0.35f) state.Lasso.Add(mouse);
+                if (drawingBox)
+                {
+                    boxMoved |= Vector2.Distance(boxStart, mouse) >= 0.5f;
+                    state.Lasso = BoxPolygon(boxStart, mouse);
+                }
+                else if (Vector2.Distance(state.Lasso[^1], mouse) >= 0.35f) state.Lasso.Add(mouse);
             }
             else
             {
@@ -832,7 +869,7 @@ internal sealed class App : IDisposable
             return;
         }
 
-        if (tool != Tool.Lasso || !pressed || !free || !uvView.Hovered || state.ActiveTexture < 0 || Model == null) return;
+        if (tool is not (Tool.Lasso or Tool.BoxSelect) || !pressed || !free || !uvView.Hovered || state.ActiveTexture < 0 || Model == null) return;
         bool shift = Raylib.IsKeyDown(KeyboardKey.LeftShift) || Raylib.IsKeyDown(KeyboardKey.RightShift);
         bool ctrl = Raylib.IsKeyDown(KeyboardKey.LeftControl) || Raylib.IsKeyDown(KeyboardKey.RightControl);
         var selection = state.ActiveSelection;
@@ -845,8 +882,22 @@ internal sealed class App : IDisposable
             return;
         }
         lassoOp = shift ? SelectionOp.Add : ctrl ? SelectionOp.Subtract : SelectionOp.Replace;
-        state.Lasso = new List<Vector2> { mouse };
+        drawingBox = tool == Tool.BoxSelect;
+        boxStart = mouse;
+        boxMoved = false;
+        state.Lasso = drawingBox ? BoxPolygon(mouse, mouse) : new List<Vector2> { mouse };
         lassoDrag = LassoDrag.Drawing;
+    }
+
+    private bool drawingBox, boxMoved;
+    private Vector2 boxStart;
+
+    /// <summary>The box from one texel to another, inclusive, on texel edges.</summary>
+    private static List<Vector2> BoxPolygon(Vector2 a, Vector2 b)
+    {
+        float x0 = MathF.Floor(MathF.Min(a.X, b.X)), x1 = MathF.Floor(MathF.Max(a.X, b.X)) + 1;
+        float y0 = MathF.Floor(MathF.Min(a.Y, b.Y)), y1 = MathF.Floor(MathF.Max(a.Y, b.Y)) + 1;
+        return new List<Vector2> { new(x0, y0), new(x1, y0), new(x1, y1), new(x0, y1) };
     }
 
     private void FinishLasso()
@@ -857,7 +908,8 @@ internal sealed class App : IDisposable
 
         float extent = 0;
         foreach (var p in polygon) extent = MathF.Max(extent, Vector2.Distance(p, polygon[0]));
-        if (polygon.Count < 3 || extent < 0.75f)
+        bool click = drawingBox ? !boxMoved : polygon.Count < 3 || extent < 0.75f;
+        if (click)
         {
             // A click rather than a drag: deselect.
             if (lassoOp == SelectionOp.Replace) state.Selection = null;
@@ -872,6 +924,94 @@ internal sealed class App : IDisposable
         }
         state.Selection!.Apply(polygon, lassoOp);
         if (!state.Selection.Any) state.Selection = null;
+    }
+
+    // ---------- fill ----------
+
+    private void FillFrom(SurfaceHit hit)
+    {
+        int texture = Model!.TextureOf(hit.Part);
+        if (texture < 0 || !Model.Source.Parts[hit.Part].HasUvs)
+        {
+            SetStatus(Model.Source.Parts[hit.Part].HasUvs
+                ? "This part has no texture yet: use New texture in the panel."
+                : "This part has no UVs: unwrap it in Blender first.", error: true);
+            return;
+        }
+        var tex = Model.Textures[texture];
+        var (x, y) = Brush.TexelAt(Model.Source, hit, new Vector2(tex.Width, tex.Height));
+        FillFrom(texture, tex.Wrap(x, tex.Width), tex.Wrap(y, tex.Height));
+    }
+
+    /// <summary>Bucket fill from a texel; with Shift, fills the whole selection instead. One undo step.</summary>
+    private void FillFrom(int texture, int x, int y)
+    {
+        bool shift = Raylib.IsKeyDown(KeyboardKey.LeftShift) || Raylib.IsKeyDown(KeyboardKey.RightShift);
+        var tex = Model!.Textures[texture];
+        var mask = MaskFor(texture);
+        if (shift && mask == null)
+        {
+            SetStatus("Shift+click fills the selection: make one first (X or M in the UV view).", error: true);
+            return;
+        }
+        state.ActiveTexture = texture;
+        var fill = new Stroke(tex, PaintColor, 1f, mask);
+        if (shift)
+        {
+            for (int i = 0; i < mask!.Length; i++)
+                if (mask[i]) fill.Apply(i % tex.Width, i / tex.Width, 1f);
+        }
+        else
+        {
+            Brush.Flood(fill, x, y, fillTolerance, fillContiguous, mask);
+        }
+        if (fill.Finish() is { } step) undo.Push(step);
+    }
+
+    // ---------- scrubby zoom ----------
+
+    /// <summary>
+    /// The Zoom tool (Z): drag right to zoom in and left to zoom out, about the point where the drag started (in 3D,
+    /// the surface under it); a click without dragging zooms in a step.
+    /// </summary>
+    private void UpdateZoom(bool free, bool pressed)
+    {
+        if (zoomDrag != ZoomDrag.None)
+        {
+            float dx = pointer.X - lastZoomX;
+            lastZoomX = pointer.X;
+            zoomTravel += MathF.Abs(dx);
+            if (dx != 0) ApplyZoom(MathF.Exp(dx * 0.01f));
+            if (!pointerDown)
+            {
+                if (zoomTravel < 3f) ApplyZoom(1.5f);
+                zoomDrag = ZoomDrag.None;
+            }
+            return;
+        }
+        if (tool != Tool.Zoom || !pressed || !free) return;
+        if (view3d.Hovered)
+        {
+            var ray = view3d.MouseRay();
+            zoomFocus = Model != null && Raycast.Cast(Model.Source, ray.Position, ray.Direction, state.ObjectVisible, out var hit)
+                ? hit.Point
+                : ray.Position + ray.Direction * view3d.Camera.Distance;
+            zoomDrag = ZoomDrag.View3D;
+        }
+        else if (uvView.Hovered)
+        {
+            zoomAnchor = pointer;
+            zoomDrag = ZoomDrag.Uv;
+        }
+        lastZoomX = pointer.X;
+        zoomTravel = 0;
+    }
+
+    /// <summary>Zooms the view being scrubbed; <paramref name="amount"/> above 1 zooms in.</summary>
+    private void ApplyZoom(float amount)
+    {
+        if (zoomDrag == ZoomDrag.View3D) view3d.Camera.ZoomAbout(zoomFocus, 1f / amount);
+        else if (zoomDrag == ZoomDrag.Uv) uvView.ZoomAt(zoomAnchor, amount);
     }
 
     /// <summary>The selection mask for strokes on <paramref name="texture"/>: paint stays inside it.</summary>
@@ -1112,7 +1252,7 @@ internal sealed class App : IDisposable
 
     private void SetColor(Color c) => hsv = ColorWheel.RgbToHsv(new Vector3(c.R, c.G, c.B) / 255f, hsv.X);
 
-    private enum CursorIcon { System, Eyedropper, Pencil, Brush, Lasso, Move }
+    private enum CursorIcon { System, Eyedropper, Pencil, Brush, Lasso, Move, Fill, Zoom, Box }
 
     /// <summary>Shows the system cursor, or hides it while a tool draws its own.</summary>
     private void UpdateSystemCursor()
@@ -1139,6 +1279,9 @@ internal sealed class App : IDisposable
             case CursorIcon.Brush: DrawBrushIcon(draw, cursorTip); break;
             case CursorIcon.Lasso: DrawLassoIcon(draw, cursorTip); break;
             case CursorIcon.Move: DrawMoveIcon(draw, cursorTip); break;
+            case CursorIcon.Fill: DrawBucketIcon(draw, cursorTip); break;
+            case CursorIcon.Zoom: DrawZoomIcon(draw, cursorTip); break;
+            case CursorIcon.Box: DrawBoxIcon(draw, cursorTip); break;
         }
         if (selfTestIcons)
         {
@@ -1147,6 +1290,9 @@ internal sealed class App : IDisposable
             DrawBrushIcon(draw, at + new Vector2(70, 0));
             DrawLassoIcon(draw, at + new Vector2(140, 0));
             DrawMoveIcon(draw, at + new Vector2(230, 0));
+            DrawBucketIcon(draw, at + new Vector2(0, 60));
+            DrawZoomIcon(draw, at + new Vector2(90, 60));
+            DrawBoxIcon(draw, at + new Vector2(160, 60));
         }
     }
 
@@ -1206,6 +1352,54 @@ internal sealed class App : IDisposable
             draw.AddBezierCubic(knot, knot + new Vector2(-2, 6), tip + new Vector2(6, -4), tip, color, width);
         }
         draw.AddCircleFilled(knot, 2.5f, Black);
+    }
+
+    /// <summary>A tipped bucket pouring a drop of the paint colour onto the hot spot.</summary>
+    private void DrawBucketIcon(ImDrawListPtr draw, Vector2 tip)
+    {
+        Vector2 c = tip + new Vector2(15, -15);
+        Vector2 u = Vector2.Normalize(new Vector2(1, -0.35f)), v = new(-u.Y, u.X);
+        var body = new[] { c - u * 7 - v * 8, c + u * 7 - v * 8, c + u * 5 + v * 6, c - u * 5 + v * 6 };
+        Outlined(draw, body, U32(new Vector4(0.85f, 0.85f, 0.88f, 1)));
+        draw.AddBezierCubic(c - u * 7 - v * 8, c - u * 9 - v * 16, c + u * 9 - v * 16, c + u * 7 - v * 8, Black, 2.5f);
+        // Paint spilling from the rim down to the hot spot.
+        draw.AddLine(c - u * 7 - v * 8, tip + new Vector2(0, -3), Black, 4f);
+        draw.AddLine(c - u * 7 - v * 8, tip + new Vector2(0, -3), U32(PaintColor), 2f);
+        draw.AddCircleFilled(tip, 3.5f, Black);
+        draw.AddCircleFilled(tip, 2.3f, U32(PaintColor));
+    }
+
+    /// <summary>A magnifier with its lens centred on the hot spot.</summary>
+    private static void DrawZoomIcon(ImDrawListPtr draw, Vector2 center)
+    {
+        const float r = 8f;
+        Vector2 handleStart = center + Vector2.Normalize(new Vector2(1, 1)) * r, handleEnd = handleStart + Vector2.Normalize(new Vector2(1, 1)) * 9f;
+        draw.AddLine(handleStart, handleEnd, Black, 6f);
+        draw.AddLine(handleStart, handleEnd, White, 3f);
+        draw.AddCircle(center, r, Black, 0, 4f);
+        draw.AddCircle(center, r, White, 0, 2f);
+        draw.AddLine(center - new Vector2(4, 0), center + new Vector2(4, 0), White, 1.5f);
+        draw.AddLine(center - new Vector2(0, 4), center + new Vector2(0, 4), White, 1.5f);
+    }
+
+    /// <summary>A crosshair with a dashed box beside it.</summary>
+    private static void DrawBoxIcon(ImDrawListPtr draw, Vector2 center)
+    {
+        foreach (var (a, b) in new[] { (new Vector2(-6, 0), new Vector2(6, 0)), (new Vector2(0, -6), new Vector2(0, 6)) })
+        {
+            draw.AddLine(center + a, center + b, Black, 3f);
+            draw.AddLine(center + a, center + b, White, 1f);
+        }
+        Vector2 min = center + new Vector2(8, -22), max = center + new Vector2(22, -8);
+        draw.AddRect(min, max, Black, 0, ImDrawFlags.None, 3f);
+        for (int i = 0; i < 4; i++)
+        {
+            // Dashes along each side.
+            Vector2 from = i switch { 0 => min, 1 => new Vector2(max.X, min.Y), 2 => max, _ => new Vector2(min.X, max.Y) };
+            Vector2 to = i switch { 0 => new Vector2(max.X, min.Y), 1 => max, 2 => new Vector2(min.X, max.Y), _ => min };
+            for (float t = 0; t < 1f; t += 0.5f)
+                draw.AddLine(Vector2.Lerp(from, to, t), Vector2.Lerp(from, to, t + 0.25f), White, 1.2f);
+        }
     }
 
     /// <summary>Four arrows: dragging here moves the selected texels.</summary>
@@ -1310,7 +1504,7 @@ internal sealed class App : IDisposable
         }
         if (ImGui.BeginMenu("View"))
         {
-            ImGui.MenuItem("Wireframe", "Z", ref view3d.Wireframe);
+            ImGui.MenuItem("Wireframe", "Shift+Z", ref view3d.Wireframe);
             ImGui.MenuItem("Grid", null, ref view3d.Grid);
             if (ImGui.BeginMenu("Texture view (3D)"))
             {
@@ -1413,11 +1607,19 @@ internal sealed class App : IDisposable
         ToolButton("Brush", Tool.Brush, "B");
         ImGui.SameLine();
         ToolButton("Eyedropper", Tool.Eyedropper, "I");
-        ToolButton("Lasso (UV)", Tool.Lasso, "X");
-        if (state.ActiveSelection != null)
+        ToolButton("Fill", Tool.Fill, "G");
+        ImGui.SameLine();
+        ToolButton("Zoom", Tool.Zoom, "Z");
+        ImGui.TextDisabled("Lasso and box select: on the UV view.");
+
+        if (tool == Tool.Fill)
         {
+            float tolerancePercent = fillTolerance * 100f;
+            ImGui.SetNextItemWidth(150);
+            if (ImGui.SliderFloat("Tolerance", ref tolerancePercent, 0f, 100f, "%.0f%%")) fillTolerance = tolerancePercent / 100f;
+            ImGui.Checkbox("Contiguous", ref fillContiguous);
             ImGui.SameLine();
-            if (ImGui.Button("Deselect (Ctrl+D)", new Vector2(half, 0))) state.Selection = null;
+            ImGui.TextDisabled("Shift+click: fill selection");
         }
 
         var rgb = ColorWheel.HsvToRgb(hsv);
@@ -1446,7 +1648,7 @@ internal sealed class App : IDisposable
         DrawPressureSection();
         ImGui.SetNextItemWidth(150);
         ImGui.SliderFloat("Lighting", ref view3d.Shade, 0f, 1f, view3d.Shade <= 0 ? "flat" : "%.2f");
-        ImGui.Checkbox("Wireframe (Z)", ref view3d.Wireframe);
+        ImGui.Checkbox("Wireframe (Shift+Z)", ref view3d.Wireframe);
         ImGui.SetNextItemWidth(150);
         int viewIndex = (int)textureView;
         if (ImGui.Combo("Texture view", ref viewIndex, TextureViewNames, TextureViewNames.Length)) textureView = (TextureView)viewIndex;
@@ -1522,6 +1724,34 @@ internal sealed class App : IDisposable
         ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);
         ImGui.TextWrapped("H hide, Shift+H hide others, Alt+H reveal, / local view. Hold Alt over a colour and let go to pick it.");
         ImGui.PopStyleColor();
+    }
+
+    /// <summary>The UV view's own toolbar: the tools that only work there.</summary>
+    private void DrawUvToolbar()
+    {
+        ImGui.SetNextWindowPos(new Vector2(uvRect.X + 6, uvRect.Y + 20));
+        ImGui.SetNextWindowBgAlpha(0.85f);
+        ImGui.Begin("##uvtools", ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings
+                                 | ImGuiWindowFlags.NoFocusOnAppearing | ImGuiWindowFlags.NoNav | ImGuiWindowFlags.NoMove);
+        void Tool(string label, Paint.Tool value)
+        {
+            bool active = tool == value;
+            if (active) ImGui.PushStyleColor(ImGuiCol.Button, ImGui.GetStyle().Colors[(int)ImGuiCol.ButtonActive]);
+            if (ImGui.Button(label)) tool = value;
+            if (active) ImGui.PopStyleColor();
+            ImGui.SameLine();
+        }
+        Tool("Lasso (X)", Paint.Tool.Lasso);
+        Tool("Box (M)", Paint.Tool.BoxSelect);
+        if (state.ActiveSelection != null)
+        {
+            if (ImGui.Button("Deselect (Ctrl+D)")) state.Selection = null;
+        }
+        else
+        {
+            ImGui.TextDisabled("no selection");
+        }
+        ImGui.End();
     }
 
     private void DrawColorPicker()
@@ -1676,6 +1906,28 @@ internal sealed class App : IDisposable
                     Console.WriteLine($"[selftest] flow 25% opacity 60%, centre after each dab: {string.Join(", ", levels)} (cap {0.6f * 255:0})");
                 }
 
+                // Fill: a 3x3 white block in black; contiguous fills just the block, global fills both blocks.
+                {
+                    using var probe = PaintTexture.Create("probe", 8, 8, new Color(0, 0, 0, 255));
+                    foreach (var (bx, by) in new[] { (1, 1), (5, 5) })
+                        for (int y = by; y < by + 2; y++)
+                        for (int x = bx; x < bx + 2; x++) probe.Pixels[y * 8 + x] = new Color(255, 255, 255, 255);
+                    int Red() => probe.Pixels.Count(c => c is { R: 255, G: 0 });
+                    var contiguousFill = new Stroke(probe, new Color(255, 0, 0, 255));
+                    Brush.Flood(contiguousFill, 1, 1, 0f, contiguous: true, mask: null);
+                    int contiguousCount = Red();
+                    var globalFill = new Stroke(probe, new Color(255, 0, 0, 255));
+                    Brush.Flood(globalFill, 0, 0, 0f, contiguous: false, mask: null);
+                    Console.WriteLine($"[selftest] fill: contiguous {contiguousCount} texels (expect 4), then global fill of black makes {Red()} red (expect 60)");
+                }
+
+                // Box select snaps to whole texels: dragging from (1.2, 1.7) to (3.9, 2.1) covers 3 x 2 texels.
+                {
+                    var box = new TexelSelection(0, 8, 8);
+                    box.Apply(BoxPolygon(new Vector2(1.2f, 1.7f), new Vector2(3.9f, 2.1f)), SelectionOp.Replace);
+                    Console.WriteLine($"[selftest] box select covers {box.Mask.Count(m => m)} texels (expect 6)");
+                }
+
                 tool = Tool.Brush;
                 Console.WriteLine($"[selftest] undo available: {undo.CanUndo}; dirty textures: {Model.Textures.Count(t => t.Dirty)}");
                 break;
@@ -1731,6 +1983,8 @@ internal sealed class App : IDisposable
         pressureToFlow = saved.PressureToFlow;
         pressureToSize = saved.PressureToSize;
         pressureCurve = Math.Clamp(saved.PressureCurve, 0.4f, 3f);
+        fillTolerance = Math.Clamp(saved.FillTolerance, 0f, 1f);
+        fillContiguous = saved.FillContiguous;
         if (options.TextureView == 0) textureView = (TextureView)Math.Clamp(saved.TextureView, 0, 2);
         view3d.Shade = Math.Clamp(saved.Lighting, 0f, 1f);
         view3d.Grid = saved.Grid;
@@ -1770,6 +2024,8 @@ internal sealed class App : IDisposable
             PressureToFlow = pressureToFlow,
             PressureToSize = pressureToSize,
             PressureCurve = pressureCurve,
+            FillTolerance = fillTolerance,
+            FillContiguous = fillContiguous,
             TextureView = (int)textureView,
             Lighting = view3d.Shade,
             Grid = view3d.Grid,

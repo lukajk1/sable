@@ -31,7 +31,7 @@ Open models by dropping them on the window, with File > Open (Ctrl+O), or on the
 | Numpad . or F | Frame the selection |
 | Home | Frame everything |
 | / (or numpad /) | Local view: only the active object, framed; again to go back |
-| Z | Wireframe overlay (off by default; the selected submesh stays outlined in Submesh mode) |
+| Shift+Z | Wireframe overlay (off by default; the selected submesh stays outlined in Submesh mode) |
 
 UV view: middle drag pans, the wheel zooms around the cursor, and Home fits the texture. The status bar shows the texel under the cursor.
 
@@ -55,6 +55,9 @@ Painting goes to the active object only, in either view:
 | B | Brush: round and soft, sized in texels, with Hardness (a solid core out to this share of the radius, then a thin feathered edge), Opacity and Flow. Each texel takes the share of it the brush covers, so even a 1-2 texel brush blends partial colour |
 | I | Eyedropper: the unlit texel colour (the material colour where there's no texture) |
 | Hold Alt | Eyedropper from any tool: hover a colour and let go of Alt to take it (no click). Its cursor shows a loupe of the texels around the one under it, with the sampled and current colours side by side |
+| G | Fill bucket: fills the connected texels of similar colour (Tolerance, Contiguous) from the one clicked, in either view, inside the selection if there is one; Shift+click fills the whole selection |
+| Z | Scrubby zoom: drag right to zoom in, left to zoom out, about where the drag started (in 3D, the surface under it); a click zooms in a step |
+| M | Box select (UV view): like the lasso, snapped to whole texels |
 | X | Lasso (UV view): drag to select texels, Shift adds, Ctrl subtracts; drag inside the selection to move those texels (leaves them transparent), Ctrl+drag to move a copy; click outside, Ctrl+D or Esc to deselect. Painting stays inside the selection |
 | W / Q | Brush bigger / smaller |
 | D | Colour picker (hue ring around a saturation/value square) at the cursor; D or Esc closes it |
@@ -70,6 +73,8 @@ Over the views, each tool has its own cursor: a pencil (its body in the paint co
 The 3D view's **Texture view** (panel or View menu) chooses how textures are sampled: Pixel (nearest, for pixel art), Smooth (bilinear), or Smooth + mipmaps (trilinear with 16x anisotropic, the usual game setting for high-res textures; mipmaps stay current while painting). The UV view always shows exact texels. `--texview 0|1|2` picks one at launch.
 
 If a frame takes over 40 ms, the status bar says so for a few seconds and a line goes to `%TEMP%\Sable\hitches.log`: which part of the frame was slow (tools, texture upload, 3D, UV, UI, present), how many dabs and ray casts it did, and whether the garbage collector ran.
+
+The tools that only work in the UV view (lasso, box select) sit in a toolbar on the UV view itself; the panel holds the ones that work in both.
 
 On the model the brush paints every texel whose point on the surface falls inside the brush, so strokes carry across UV seams; it only paints faces turned the same way as the one under the cursor. Objects with UVs but no texture get a **New texture** button in the panel, filled with the material colour.
 

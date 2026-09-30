@@ -17,6 +17,8 @@ internal sealed class Settings
     public bool PressureToFlow { get; set; } = true;
     public bool PressureToSize { get; set; }
     public float PressureCurve { get; set; } = 1.6f;
+    public float FillTolerance { get; set; }
+    public bool FillContiguous { get; set; } = true;
 
     // Display.
     public int TextureView { get; set; }
