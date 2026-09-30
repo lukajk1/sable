@@ -193,11 +193,14 @@ internal sealed class App : IDisposable
             DrawViewLabel(rectUv, state.ActiveTexture >= 0 && Model != null ? $"UV  {Model.Textures[state.ActiveTexture].Name}" : "UV");
 
             rlImGui.Begin();
+            // Tab is Sable's Object/Submesh key, so ImGui must not use it to hop between widgets.
+            ImGui.PushItemFlag(ImGuiItemFlags.NoTabStop, true);
             DrawMenu();
             DrawPanel(h);
             DrawStatusBar(w, h);
             DrawColorPicker();
             DrawToolCursor();
+            ImGui.PopItemFlag();
             rlImGui.End();
             UpdateSystemCursor();
 
