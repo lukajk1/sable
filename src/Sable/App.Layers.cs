@@ -41,6 +41,28 @@ internal sealed partial class App
     private int newTextureWidth = 256, newTextureHeight = 256;
     private int newTextureFill;
     private string newTextureName = "";
+    /// <summary>Other materials the new texture also goes on (they share the UV layout without overlapping).</summary>
+    private readonly HashSet<int> newTextureAlso = new();
+    private List<(int A, int B, int Cells)> uvOverlaps = new();
+
+    /// <summary>Two materials' UVs cover the same part of the texture (more than a few stray cells of 256x256).</summary>
+    private bool UvsOverlap(int a, int b) =>
+        uvOverlaps.Any(o => ((o.A == a && o.B == b) || (o.A == b && o.B == a)) && o.Cells > 16);
+
+    /// <summary>
+    /// Ticks the other materials a texture for <paramref name="material"/> can cover: those without a texture of
+    /// their own whose UVs overlap neither it nor each other.
+    /// </summary>
+    private void SuggestSharedMaterials(int material, List<int> candidates)
+    {
+        newTextureAlso.Clear();
+        foreach (int m in candidates)
+        {
+            if (m == material || Model!.Source.Materials[m].TextureIndex >= 0 || UvsOverlap(m, material)) continue;
+            if (newTextureAlso.Any(other => UvsOverlap(m, other))) continue;
+            newTextureAlso.Add(m);
+        }
+    }
 
     private PaintTexture? ActiveTextureObject =>
         Model != null && state.ActiveTexture >= 0 && state.ActiveTexture < Model.Textures.Count ? Model.Textures[state.ActiveTexture] : null;
@@ -316,6 +338,8 @@ internal sealed partial class App
         newTextureName = Path.GetFileNameWithoutExtension(Model.UniqueTextureName(Model.Source.Materials[material].Name));
         if (ActiveTextureObject is { } current && TextureSizes.Contains(current.Width) && TextureSizes.Contains(current.Height))
             (newTextureWidth, newTextureHeight) = (current.Width, current.Height);
+        uvOverlaps = Sable.Model.MeshCheck.UvOverlaps(Model.Source, 256);
+        SuggestSharedMaterials(material, candidates);
         openNewTexture = true;
     }
 
@@ -355,6 +379,7 @@ internal sealed partial class App
                 if (ImGui.Selectable($"{materials[m].Name}##m{m}", m == newTextureMaterial))
                 {
                     newTextureMaterial = m;
+                    SuggestSharedMaterials(m, candidates);
                     newTextureName = Path.GetFileNameWithoutExtension(Model.UniqueTextureName(materials[m].Name));
                 }
             ImGui.EndCombo();
@@ -375,8 +400,32 @@ internal sealed partial class App
         SizeCombo("Size", ref newTextureHeight);
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Powers of two, so the texture mips down evenly and compresses cleanly in game engines.");
 
+        if (candidates.Count > 1)
+        {
+            ImGui.TextUnformatted("Also use it for:");
+            foreach (int m in candidates)
+            {
+                if (m == newTextureMaterial) continue;
+                bool overlaps = UvsOverlap(m, newTextureMaterial) || newTextureAlso.Any(o => o != m && UvsOverlap(m, o));
+                bool on = newTextureAlso.Contains(m);
+                if (ImGui.Checkbox($"{materials[m].Name}##also{m}", ref on))
+                {
+                    if (on) newTextureAlso.Add(m);
+                    else newTextureAlso.Remove(m);
+                }
+                string note = (overlaps ? "UVs overlap: painting one would paint the other" : "")
+                              + (materials[m].TextureIndex >= 0 ? $"{(overlaps ? "; " : "")}has {Model.Textures[materials[m].TextureIndex].Name}" : "");
+                if (note.Length > 0)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(overlaps ? new Vector4(1f, 0.55f, 0.45f, 1f) : ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled], $"({note})");
+                }
+            }
+        }
+
         ImGui.SetNextItemWidth(220);
         ImGui.Combo("Fill", ref newTextureFill, FillNames, FillNames.Length);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Material colour fills each material's UV islands with that material's own colour.");
         ImGui.SetNextItemWidth(220);
         ImGui.InputText("Name", ref newTextureName, 64);
 
@@ -392,23 +441,39 @@ internal sealed partial class App
 
         if (ImGui.Button("Create", new Vector2(100, 0)) || ImGui.IsKeyPressed(ImGuiKey.Enter))
         {
-            Color? fill = newTextureFill switch
-            {
-                1 => Color.White,
-                2 => PaintColor,
-                3 => new Color(0, 0, 0, 0),
-                _ => null,
-            };
-            EndStroke();
-            state.ActiveTexture = Model.CreateTexture(newTextureMaterial, newTextureWidth, newTextureHeight, fill, name);
-            state.Selection = null;
-            uvView.RequestFit();
-            SetStatus($"Created {name} ({newTextureWidth}x{newTextureHeight}) on {info.Name}; Ctrl+S saves it to {DefaultSavePath(name)}", error: false);
+            CreateNewTexture(name);
             ImGui.CloseCurrentPopup();
         }
         ImGui.SameLine();
         if (ImGui.Button("Cancel", new Vector2(100, 0)) || ImGui.IsKeyPressed(ImGuiKey.Escape)) ImGui.CloseCurrentPopup();
         ImGui.EndPopup();
+    }
+
+    /// <summary>Makes the texture the New texture dialog describes and puts it on the ticked materials.</summary>
+    private void CreateNewTexture(string name)
+    {
+        var materials = Model!.Source.Materials;
+        Color? fill = newTextureFill switch
+        {
+            1 => Color.White,
+            2 => PaintColor,
+            3 => new Color(0, 0, 0, 0),
+            _ => null,
+        };
+        EndStroke();
+        int created = Model.CreateTexture(newTextureMaterial, newTextureWidth, newTextureHeight, fill, name);
+        // With the material colour fill, each other material's UV islands get its own colour, so the model looks
+        // as it did before the texture.
+        foreach (int m in newTextureAlso)
+        {
+            Model.AssignTexture(m, created);
+            if (fill == null) Model.FillUvIslands(Model.Textures[created], m, Sable.Rendering.GpuModel.ToColor(materials[m].BaseColor with { W = 1 }));
+        }
+        state.ActiveTexture = created;
+        state.Selection = null;
+        uvView.RequestFit();
+        string on = string.Join(", ", new[] { materials[newTextureMaterial].Name }.Concat(newTextureAlso.Select(m => materials[m].Name)));
+        SetStatus($"Created {name} ({newTextureWidth}x{newTextureHeight}) on {on}; Ctrl+S saves it to {DefaultSavePath(name)}", error: false);
     }
 
     // ---------- self-test ----------

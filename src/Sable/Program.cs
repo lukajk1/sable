@@ -7,6 +7,11 @@ internal static class Program
     private static int Main(string[] args)
     {
         if (args.Length > 0 && args[0] == "--pick") return FileDialogs.RunPicker(args);
+        if (args.Length > 1 && args[0] == "--check")
+        {
+            Model.MeshCheck.Print(Model.ModelLoader.Load(args[1], _ => { }));
+            return 0;
+        }
         var options = AppOptions.Parse(args);
         using var app = new App(options);
         app.Run();

@@ -69,6 +69,8 @@ internal sealed partial class App : IDisposable
     private (int X, int Y) lastTexel;
     private Vector2 lastDab;
     private float cursorScreenRadius = 4f;
+    /// <summary>Shown beside the cursor while it's over a part that can't be painted (and why).</summary>
+    private string? hoverNote;
 
     // Eyedropper (the I tool, or holding Alt).
     private Sample sample;
@@ -812,6 +814,7 @@ internal sealed partial class App : IDisposable
     private void UpdateTools(bool free)
     {
         state.Cursor = default;
+        hoverNote = null;
         sample = default;
         cursorIcon = CursorIcon.System;
         cursorTip = pointer;
@@ -1181,7 +1184,13 @@ internal sealed partial class App : IDisposable
     {
         var part = Model!.Source.Parts[hit.Part];
         int texture = Model.TextureOf(hit.Part);
-        if (texture < 0 || part.Uvs == null) return;
+        if (texture < 0 || part.Uvs == null)
+        {
+            hoverNote = part.Uvs == null
+                ? $"{part.Name}: no UVs"
+                : $"{Model.Source.Materials[part.MaterialIndex].Name}: no texture (New texture..., or pick one under Active object)";
+            return;
+        }
         if (stroke == null) state.ActiveTexture = texture;
         var tex = Model.Textures[texture];
         var size = new Vector2(tex.Width, tex.Height);
@@ -1268,7 +1277,7 @@ internal sealed partial class App : IDisposable
         if (texture < 0 || !Model.Source.Parts[hit.Part].HasUvs)
         {
             SetStatus(Model.Source.Parts[hit.Part].HasUvs
-                ? "This part has no texture yet: use New texture in the panel."
+                ? $"{Model.Source.Materials[Model.Source.Parts[hit.Part].MaterialIndex].Name} has no texture: make one with New texture... on the UV toolbar, or give it an existing one under Active object."
                 : "This part has no UVs: unwrap it in Blender first.", error: true);
             return;
         }
@@ -1448,6 +1457,13 @@ internal sealed partial class App : IDisposable
     private void DrawToolCursor()
     {
         var draw = ImGui.GetForegroundDrawList();
+        if (hoverNote != null && cursorIcon != CursorIcon.System)
+        {
+            var at = cursorTip + new Vector2(18, 14);
+            var size = ImGui.CalcTextSize(hoverNote);
+            draw.AddRectFilled(at - new Vector2(4, 2), at + size + new Vector2(4, 2), U32(new Vector4(0.1f, 0.1f, 0.1f, 0.85f)), 3f);
+            draw.AddText(at, U32(new Vector4(1f, 0.6f, 0.45f, 1f)), hoverNote);
+        }
         switch (cursorIcon)
         {
             case CursorIcon.Eyedropper: DrawEyedropper(); break;

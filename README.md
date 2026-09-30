@@ -92,6 +92,7 @@ Over the views each tool shows its own cursor:
 - **Hardness:** a solid core out to that share of the radius, then a thin feathered edge.
 - **Opacity and Flow** work as in Photoshop and Krita. Flow is how much each dab adds, so with low flow, going over a spot again within a stroke deepens it. Opacity is the most one stroke can reach. Both sliders are on a log scale, with most of their travel in the low range.
 - **On the model:** the brush paints every texel whose point on the surface falls inside it, so strokes carry across UV seams. It only paints faces turned the same way as the one under the cursor.
+- **Parts that won't paint:** a brush paints the texture of the material under it. Over a part whose material has no texture, the cursor says so (and names the material); give it one with New texture, or pick an existing texture for it under Active object.
 - **Halo:** a press that just misses the active object, within 70% of the brush's screen radius (at least 11 px), doesn't orbit. The stroke starts and paints once the brush reaches the surface. A fill click there does nothing.
 
 ### Pen pressure
@@ -132,7 +133,7 @@ These are in the panel and the View menu:
 
 ## Textures and files
 
-- **New texture:** New texture... on the UV toolbar (also in the File menu, and in each material's texture list in the panel) makes a texture for one of the active object's materials. Pick the material, a size, a fill (material colour, white, the paint colour or transparent) and a name. Sizes are powers of two from 16 to 4096, and width and height can differ: those mip down evenly and compress (BC/DXT, ASTC) without padding in game engines. If the material already had a texture, the new one takes its place and the old one stays open.
+- **New texture:** New texture... on the UV toolbar (also in the File menu, and in each material's texture list in the panel) makes a texture for one of the active object's materials. Pick the material, a size, a fill (material colour, white, the paint colour or transparent) and a name. Under **Also use it for**, the object's other materials are ticked when they have no texture and their UVs don't overlap the chosen material's or each other's, so one texture covers every material laid out on the same UV sheet. A material whose UVs overlap (such as a screen unwrapped over the whole square) is flagged and left for a texture of its own. With the material colour fill, each material's UV islands start in its own colour. Sizes are powers of two from 16 to 4096, and width and height can differ: those mip down evenly and compress (BC/DXT, ASTC) without padding in game engines. If the material already had a texture, the new one takes its place and the old one stays open.
 - **Which texture a material shows:** under Active object, each material has a list of the model's textures. Picking one only changes what Sable shows and paints; the model file isn't changed.
 - **Ctrl+S** saves each changed texture back to its own file. For a `.blend` that's the image file the .blend itself uses (found by asking Blender), so Unity reimports it. Textures without a file (embedded or new) go next to the model as `<model>_<texture>.png` and need hooking up to the material in Blender. Layers are saved beside the image (see Layers).
 - **File > Import image into texture:** replaces the active texture's pixels with an image, resizing the texture to it. Ctrl+S still saves to the texture's own file. Importing clears undo.
@@ -160,7 +161,8 @@ The scene (camera, selection, hidden objects) isn't kept, and the tool always st
 ## Command line
 
 ```
-Sable [model] [--select name] [--texview 0|1|2] [--screenshot out.png] [--selftest] [--frames N]
+Sable [model] [--select name] [--texview 0|1|2] [--screenshot out.png] [--selftest] [--frames N] [--bench]
+Sable --check model
 ```
 
 | Option | What it does |
@@ -171,6 +173,7 @@ Sable [model] [--select name] [--texview 0|1|2] [--screenshot out.png] [--selfte
 | `--screenshot out.png` | Render a few frames, save the window as a PNG and exit (settings are left alone) |
 | `--selftest` | Before the screenshot, run checks: test strokes, fill, box and lasso selection, flow build-up, hide undo, UV export and re-import, and layers (blend modes, opacity, eraser, soft paint on a transparent layer, undo, the layer file round trip, merge down). They print to the console; nothing is saved next to the model (the layer file test writes to `%TEMP%\Sable\selftest`) |
 | `--frames N` | Quit after N frames, saving settings as a normal close does |
+| `--check model` | Print each submesh's triangles, flipped faces (winding against the normals), zero-area UVs and bounds, and which materials' UVs overlap; then quit. For finding out why part of a model won't paint |
 | `--bench` | On the textured object with the most triangles, time hover ray casts, 3D strokes (pencil and brushes of 8, 32 and 96 texels), a UV stroke, stroke setup and texture upload; print them and quit |
 
 Environment: `SABLE_BLENDER` (the Blender to use), `SABLE_SETTINGS` (a different settings file, for tests).

@@ -62,6 +62,8 @@ public sealed class MaterialInfo
 {
     public required string Name { get; init; }
     public Vector4 Color { get; set; } = Vector4.One;
+    /// <summary>The colour as loaded, before a texture made in Sable turned the material white.</summary>
+    public Vector4 BaseColor { get; init; } = Vector4.One;
     /// <summary>Index into <see cref="LoadedModel.Textures"/>, or -1.</summary>
     public int TextureIndex { get; set; } = -1;
 }

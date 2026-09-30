@@ -155,6 +155,7 @@ public static class ModelLoader
         {
             Name = string.IsNullOrWhiteSpace(material.Name) ? "(unnamed)" : material.Name,
             Color = color,
+            BaseColor = color,
             TextureIndex = textureIndex,
         };
     }
