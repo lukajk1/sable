@@ -108,6 +108,7 @@ internal sealed class App : IDisposable
             UpdateSplitter(area, splitter, mouse, free);
 
             var (sMin, sMax) = VisibleBounds();
+            view3d.OrbitCenter = SelectionCenter();
             view3d.Update(rect3d, free && Raylib.CheckCollisionPointRec(mouse, rect3d), sMin, sMax);
             uvView.Update(rectUv, free && Raylib.CheckCollisionPointRec(mouse, rectUv), state);
             HandleShortcuts();
@@ -203,6 +204,14 @@ internal sealed class App : IDisposable
         if (Model != null && state.ActiveObject >= 0)
             return (Model.Source.Objects[state.ActiveObject].Min, Model.Source.Objects[state.ActiveObject].Max);
         return VisibleBounds();
+    }
+
+    /// <summary>Centre of the selected submesh or active object, for orbiting around; null with nothing selected.</summary>
+    private Vector3? SelectionCenter()
+    {
+        if (Model == null || state.ActiveObject < 0 || !state.ObjectVisible(state.ActiveObject)) return null;
+        var (min, max) = SelectionBounds();
+        return (min + max) * 0.5f;
     }
 
     // ---------- loading and saving ----------

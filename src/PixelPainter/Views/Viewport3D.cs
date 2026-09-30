@@ -17,6 +17,9 @@ public sealed class Viewport3D : IDisposable
     public bool Wireframe;
     public bool Grid = true;
 
+    /// <summary>What orbiting swings around: the selection's centre, set by the app; null orbits the pivot.</summary>
+    public Vector3? OrbitCenter;
+
     public bool Hovered { get; private set; }
     /// <summary>A navigation drag (orbit, pan, zoom) is in progress.</summary>
     public bool Navigating { get; private set; }
@@ -48,7 +51,7 @@ public sealed class Viewport3D : IDisposable
             Vector2 delta = Raylib.GetMouseDelta();
             if (shift) Camera.Pan(delta, rect.Height);
             else if (ctrl) Camera.Zoom(MathF.Exp(delta.Y * 0.01f));
-            else Camera.Orbit(delta);
+            else Camera.Orbit(delta, OrbitCenter);
         }
 
         if (!hovered) return;
@@ -61,10 +64,10 @@ public sealed class Viewport3D : IDisposable
         if (ViewKey(KeyboardKey.Kp3, KeyboardKey.Three)) Camera.SetView(ctrl ? -90 : 90, 0);
         if (ViewKey(KeyboardKey.Kp7, KeyboardKey.Seven)) Camera.SetView(0, ctrl ? -90 : 90);
         if (ViewKey(KeyboardKey.Kp9, KeyboardKey.Nine)) Camera.Yaw += MathF.PI;
-        if (ViewKey(KeyboardKey.Kp4, KeyboardKey.Four)) Camera.Orbit(new Vector2(-step, 0));
-        if (ViewKey(KeyboardKey.Kp6, KeyboardKey.Six)) Camera.Orbit(new Vector2(step, 0));
-        if (ViewKey(KeyboardKey.Kp8, KeyboardKey.Eight)) Camera.Orbit(new Vector2(0, -step));
-        if (ViewKey(KeyboardKey.Kp2, KeyboardKey.Two)) Camera.Orbit(new Vector2(0, step));
+        if (ViewKey(KeyboardKey.Kp4, KeyboardKey.Four)) Camera.Orbit(new Vector2(-step, 0), OrbitCenter);
+        if (ViewKey(KeyboardKey.Kp6, KeyboardKey.Six)) Camera.Orbit(new Vector2(step, 0), OrbitCenter);
+        if (ViewKey(KeyboardKey.Kp8, KeyboardKey.Eight)) Camera.Orbit(new Vector2(0, -step), OrbitCenter);
+        if (ViewKey(KeyboardKey.Kp2, KeyboardKey.Two)) Camera.Orbit(new Vector2(0, step), OrbitCenter);
         if (ViewKey(KeyboardKey.Kp5, KeyboardKey.Five)) Camera.Ortho = !Camera.Ortho;
         if (Raylib.IsKeyPressed(KeyboardKey.Home)) Camera.Frame(frameMin, frameMax);
     }

@@ -48,10 +48,21 @@ public sealed class OrbitCamera
         return Raymath.MatrixPerspective(FovDegrees * MathF.PI / 180f, aspect, near, far);
     }
 
-    public void Orbit(Vector2 pixels)
+    /// <summary>
+    /// Turntable orbit. With <paramref name="around"/>, the whole camera swings rigidly around that point instead of
+    /// the pivot (Blender's "Orbit Around Selection"): the pivot keeps its place relative to the camera, so the view
+    /// doesn't jump to look at the point.
+    /// </summary>
+    public void Orbit(Vector2 pixels, Vector3? around = null)
     {
+        Vector3 right = Right, up = Up, back = Back;
         Yaw -= pixels.X * 0.008f;
         Pitch = Math.Clamp(Pitch + pixels.Y * 0.008f, -MathF.PI / 2f, MathF.PI / 2f);
+        if (around is not { } center) return;
+
+        Vector3 offset = Pivot - center;
+        var local = new Vector3(Vector3.Dot(offset, right), Vector3.Dot(offset, up), Vector3.Dot(offset, back));
+        Pivot = center + Right * local.X + Up * local.Y + Back * local.Z;
     }
 
     public void Pan(Vector2 pixels, float viewportHeight)
