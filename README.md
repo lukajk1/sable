@@ -55,7 +55,7 @@ Painting goes to the active object only, in either view:
 | B | Brush: round, sized in texels, with a hardness slider for the edge |
 | I | Eyedropper: the unlit texel colour (the material colour where there's no texture) |
 | Hold Alt, click | Eyedropper from any tool. Its cursor shows a loupe of the texels around the one under it, with the sampled and current colours side by side |
-| Q / E | Brush bigger / smaller |
+| Q / W | Brush bigger / smaller |
 | D | Colour picker (hue ring around a saturation/value square) at the cursor; D or Esc closes it |
 | Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y | Undo, redo (per stroke) |
 | Ctrl+S | Save changed textures |

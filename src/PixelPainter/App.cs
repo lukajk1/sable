@@ -384,7 +384,7 @@ internal sealed class App : IDisposable
         if (Raylib.IsKeyPressed(KeyboardKey.B)) tool = Tool.Brush;
         if (Raylib.IsKeyPressed(KeyboardKey.I)) tool = Tool.Eyedropper;
         if (Pressed(KeyboardKey.Q)) brushSize = brushSize < 4 ? brushSize + 1 : MathF.Min(MathF.Round(brushSize * 1.25f), 256);
-        if (Pressed(KeyboardKey.E)) brushSize = brushSize <= 4 ? MathF.Max(brushSize - 1, 1) : MathF.Round(brushSize / 1.25f);
+        if (Pressed(KeyboardKey.W)) brushSize = brushSize <= 4 ? MathF.Max(brushSize - 1, 1) : MathF.Round(brushSize / 1.25f);
         if (Raylib.IsKeyPressed(KeyboardKey.Z)) view3d.Wireframe = !view3d.Wireframe;
         if (Raylib.IsKeyPressed(KeyboardKey.H)) { if (alt) Reveal(); else if (shift) HideUnselected(); else HideSelected(); }
         if (Raylib.IsKeyPressed(KeyboardKey.Slash) || Raylib.IsKeyPressed(KeyboardKey.KpDivide)) ToggleLocalView();
@@ -1006,7 +1006,7 @@ internal sealed class App : IDisposable
         ImGui.TextUnformatted($"#{c.R:X2}{c.G:X2}{c.B:X2}   D: colour picker");
 
         ImGui.SetNextItemWidth(150);
-        ImGui.SliderFloat("Size (Q/E)", ref brushSize, 1f, 128f, "%.0f", ImGuiSliderFlags.Logarithmic);
+        ImGui.SliderFloat("Size (Q/W)", ref brushSize, 1f, 128f, "%.0f", ImGuiSliderFlags.Logarithmic);
         brushSize = MathF.Max(1f, MathF.Round(brushSize));
         ImGui.SetNextItemWidth(150);
         ImGui.SliderFloat("Hardness", ref hardness, 0f, 1f, "%.2f");
