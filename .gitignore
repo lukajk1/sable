@@ -7,3 +7,4 @@ imgui.ini
 installer/publish/
 installer/output/
 blender/dist/
+__pycache__/
