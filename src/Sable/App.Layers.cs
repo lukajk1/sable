@@ -38,7 +38,8 @@ internal sealed partial class App
     // New texture dialog.
     private bool openNewTexture;
     private int newTextureMaterial = -1;
-    private int newTextureWidth = 256, newTextureHeight = 256;
+    /// <summary>Width and height of new textures: always square.</summary>
+    private int newTextureSize = 256;
     private int newTextureFill;
     private string newTextureName = "";
     /// <summary>Other materials the new texture also goes on (they share the UV layout without overlapping).</summary>
@@ -336,8 +337,8 @@ internal sealed partial class App
             material = candidates.FirstOrDefault(m => Model.Source.Materials[m].TextureIndex == state.ActiveTexture && state.ActiveTexture >= 0, candidates[0]);
         newTextureMaterial = material;
         newTextureName = Path.GetFileNameWithoutExtension(Model.UniqueTextureName(Model.Source.Materials[material].Name));
-        if (ActiveTextureObject is { } current && TextureSizes.Contains(current.Width) && TextureSizes.Contains(current.Height))
-            (newTextureWidth, newTextureHeight) = (current.Width, current.Height);
+        if (ActiveTextureObject is { } current && current.Width == current.Height && TextureSizes.Contains(current.Width))
+            newTextureSize = current.Width;
         uvOverlaps = Sable.Model.MeshCheck.UvOverlaps(Model.Source, 256);
         SuggestSharedMaterials(material, candidates);
         openNewTexture = true;
@@ -385,20 +386,14 @@ internal sealed partial class App
             ImGui.EndCombo();
         }
 
-        void SizeCombo(string label, ref int value)
+        ImGui.SetNextItemWidth(220);
+        if (ImGui.BeginCombo("Size", $"{newTextureSize} x {newTextureSize}"))
         {
-            ImGui.SetNextItemWidth(90);
-            if (!ImGui.BeginCombo(label, value.ToString())) return;
             foreach (int size in TextureSizes)
-                if (ImGui.Selectable(size.ToString(), size == value)) value = size;
+                if (ImGui.Selectable($"{size} x {size}", size == newTextureSize)) newTextureSize = size;
             ImGui.EndCombo();
         }
-        SizeCombo("##width", ref newTextureWidth);
-        ImGui.SameLine();
-        ImGui.TextUnformatted("x");
-        ImGui.SameLine();
-        SizeCombo("Size", ref newTextureHeight);
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Powers of two, so the texture mips down evenly and compresses cleanly in game engines.");
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Square, in powers of two, so the texture mips down evenly and compresses cleanly in game engines.");
 
         if (candidates.Count > 1)
         {
@@ -461,7 +456,7 @@ internal sealed partial class App
             _ => null,
         };
         EndStroke();
-        int created = Model.CreateTexture(newTextureMaterial, newTextureWidth, newTextureHeight, fill, name);
+        int created = Model.CreateTexture(newTextureMaterial, newTextureSize, newTextureSize, fill, name);
         // With the material colour fill, each other material's UV islands get its own colour, so the model looks
         // as it did before the texture.
         foreach (int m in newTextureAlso)
@@ -473,7 +468,7 @@ internal sealed partial class App
         state.Selection = null;
         uvView.RequestFit();
         string on = string.Join(", ", new[] { materials[newTextureMaterial].Name }.Concat(newTextureAlso.Select(m => materials[m].Name)));
-        SetStatus($"Created {name} ({newTextureWidth}x{newTextureHeight}) on {on}; Ctrl+S saves it to {DefaultSavePath(name)}", error: false);
+        SetStatus($"Created {name} ({newTextureSize}x{newTextureSize}) on {on}; Ctrl+S saves it to {DefaultSavePath(name)}", error: false);
     }
 
     // ---------- self-test ----------

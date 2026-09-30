@@ -2364,8 +2364,7 @@ internal sealed partial class App : IDisposable
         uvView.PixelGrid = saved.UvTexelGrid;
         uvView.ShowSiblings = saved.UvShowSiblings;
         split = Math.Clamp(saved.Split, 0.15f, 0.85f);
-        if (TextureSizes.Contains(saved.NewTextureSize)) newTextureWidth = saved.NewTextureSize;
-        if (TextureSizes.Contains(saved.NewTextureHeight)) newTextureHeight = saved.NewTextureHeight;
+        if (TextureSizes.Contains(saved.NewTextureSize)) newTextureSize = saved.NewTextureSize;
         fillAllLayers = saved.FillAllLayers;
         layersOpen = saved.LayersOpen;
 
@@ -2408,8 +2407,7 @@ internal sealed partial class App : IDisposable
             UvTexelGrid = uvView.PixelGrid,
             UvShowSiblings = uvView.ShowSiblings,
             Split = split,
-            NewTextureSize = newTextureWidth,
-            NewTextureHeight = newTextureHeight,
+            NewTextureSize = newTextureSize,
             FillAllLayers = fillAllLayers,
             LayersOpen = layersOpen,
             WindowMaximized = Raylib.IsWindowMaximized(),

@@ -30,7 +30,6 @@ internal sealed class Settings
     public bool UvShowSiblings { get; set; } = true;
     public float Split { get; set; } = 0.5f;
     public int NewTextureSize { get; set; } = 256;
-    public int NewTextureHeight { get; set; } = 256;
     public bool LayersOpen { get; set; } = true;
 
     // Window (0 = leave to the default).
