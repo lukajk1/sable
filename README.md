@@ -63,7 +63,7 @@ Painting goes to the active object only, in either view:
 
 Opacity and Flow work as in Photoshop and Krita. Flow is how much each dab adds, so with low flow going over a spot again within a stroke deepens it; Opacity is the ceiling one stroke can reach. Both sliders are on a log scale, so most of their travel is in the low range.
 
-With a Wacom (or any Windows Ink pen), pressure drives flow, and optionally size, through the pressure curve: above 1 spends more of the pen's range on light pressure, for washes, and full pressure still reaches full. The pencil ignores pressure and is always opaque. The Wacom driver's "Use Windows Ink" setting has to be on; the panel shows a live pressure bar once the pen is seen.
+With a Wacom (or any Windows Ink pen), pressure drives flow, and optionally size, through the pressure curve: above 1 spends more of the pen's range on light pressure, for washes, and full pressure still reaches full. The pencil ignores pressure and is always opaque. The Wacom driver's "Use Windows Ink" setting has to be on; the panel shows a live pressure bar once the pen is seen. While the pen is in use, Sable takes its position and touch straight from the pen's reports (every sample, including the ones between frames) instead of the mouse messages Windows makes from them, which only start after a tap/drag threshold and so swallow small movements.
 
 Over the views, each tool has its own cursor: a pencil (its body in the paint colour), a crosshair with a small brush for the brush (the view draws its size around it), the pipette and loupe for the eyedropper, and a lasso that turns into a move cross over the selection. Select keeps the normal arrow.
 

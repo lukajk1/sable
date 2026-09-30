@@ -29,12 +29,14 @@ public sealed class UvView : IDisposable
     private bool fitPending = true;
     private bool dragging;
     private Vector2 lastSize;
+    private Vector2 origin, lastPointer;
 
     public Texture2D Texture => target.Texture;
 
     public void RequestFit() => fitPending = true;
 
-    public void Update(Rectangle rect, bool hovered, EditorState state)
+    /// <param name="pointer">Where the pen or mouse is, in window pixels (the app picks the source).</param>
+    public void Update(Rectangle rect, bool hovered, Vector2 pointer, EditorState state)
     {
         Resize((int)rect.Width, (int)rect.Height);
         Hovered = hovered;
@@ -42,11 +44,14 @@ public sealed class UvView : IDisposable
         if (TextureSize != lastSize) { fitPending = true; lastSize = TextureSize; }
         if (fitPending) Fit();
 
-        Vector2 local = Raylib.GetMousePosition() - new Vector2(rect.X, rect.Y);
+        origin = new Vector2(rect.X, rect.Y);
+        Vector2 local = pointer - origin;
+        Vector2 delta = pointer - lastPointer;
+        lastPointer = pointer;
 
         if (hovered && Raylib.IsMouseButtonPressed(MouseButton.Middle)) dragging = true;
         if (!Raylib.IsMouseButtonDown(MouseButton.Middle)) dragging = false;
-        if (dragging) offset += Raylib.GetMouseDelta();
+        if (dragging) offset += delta;
 
         if (hovered)
         {
@@ -62,6 +67,9 @@ public sealed class UvView : IDisposable
 
         MouseTexel = (local - offset) / zoom;
     }
+
+    /// <summary>A window position in texels of the shown texture.</summary>
+    public Vector2 ScreenToTexel(Vector2 screen) => (screen - origin - offset) / zoom;
 
     private void Fit()
     {

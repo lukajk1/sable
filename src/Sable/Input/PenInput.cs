@@ -1,10 +1,17 @@
+using System.Numerics;
 using System.Runtime.InteropServices;
 
 namespace Sable.Input;
 
 /// <summary>
-/// Windows Ink pen input for the raylib window: pressure and contact from WM_POINTER messages.
+/// Windows Ink pen input for the raylib window: position, pressure and contact from WM_POINTER messages.
 /// </summary>
+/// <remarks>
+/// The pen's own messages are used for position too, not just pressure: the mouse messages Windows makes from pen
+/// input are held back until the pen has moved past a tap/drag threshold, and come at most once per frame, so small
+/// movements (above all at the start of a stroke) never arrive that way. Every sample, including the ones Windows
+/// coalesced between frames, is queued for <see cref="Drain"/>.
+/// </remarks>
 /// <remarks>
 /// GLFW ignores WM_POINTER, so the window procedure is subclassed to read pen data on the side. Every message is
 /// still passed on unchanged: GLFW needs its own messages, and Windows only promotes pen input to mouse messages
@@ -42,6 +49,22 @@ public static unsafe class PenInput
 
     /// <summary>Milliseconds (<see cref="Environment.TickCount64"/>) of the last pen message, so callers can tell pen from mouse.</summary>
     public static long LastPenTime { get; private set; }
+
+    /// <summary>The pen's latest position in window (client) pixels.</summary>
+    public static Vector2 Position { get; private set; }
+
+    /// <summary>One pen report: where, how hard, and whether the tip was down.</summary>
+    public readonly record struct Sample(Vector2 Position, float Pressure, bool InContact);
+
+    private static readonly List<Sample> samples = new();
+    private static POINTER_PEN_INFO[] history = new POINTER_PEN_INFO[16];
+
+    /// <summary>Moves the samples received since the last call, oldest first, into <paramref name="into"/>.</summary>
+    public static void Drain(List<Sample> into)
+    {
+        into.AddRange(samples);
+        samples.Clear();
+    }
 
     /// <summary>
     /// Hooks the window (HWND from Raylib.GetWindowHandle()). Call once after InitWindow. Safe to call when no pen exists.
@@ -126,12 +149,32 @@ public static unsafe class PenInput
         {
             InContact = false;
             Pressure = 0f;
+            Add(new Sample(Position, 0f, false));
             return;
         }
 
         if (!GetPointerPenInfo(pointerId, out POINTER_PEN_INFO info))
             return;
 
+        // Windows coalesces the samples that arrive between frames; the history has them all, newest first.
+        uint count = info.pointerInfo.historyCount;
+        if (count > 1)
+        {
+            if (history.Length < count) history = new POINTER_PEN_INFO[Math.Max(count, (uint)history.Length * 2)];
+            fixed (POINTER_PEN_INFO* buffer = history)
+            {
+                if (GetPointerPenInfoHistory(pointerId, ref count, buffer))
+                {
+                    for (int i = (int)count - 1; i >= 0; i--) Record(history[i]);
+                    return;
+                }
+            }
+        }
+        Record(info);
+    }
+
+    private static void Record(in POINTER_PEN_INFO info)
+    {
         InContact = (info.pointerInfo.pointerFlags & POINTER_FLAG_INCONTACT) != 0;
         if (!InContact)
             Pressure = 0f;
@@ -139,6 +182,18 @@ public static unsafe class PenInput
             Pressure = Math.Clamp(info.pressure / 1024f, 0f, 1f);
         else
             Pressure = 1f; // A pen that reports no pressure still paints at full strength.
+
+        POINT point = info.pointerInfo.ptPixelLocation;
+        ScreenToClient(_hwnd, ref point);
+        Position = new Vector2(point.x, point.y);
+        Add(new Sample(Position, Pressure, InContact));
+    }
+
+    private static void Add(Sample sample)
+    {
+        // Nobody draining (a modal dialog, say): don't grow without bound.
+        if (samples.Count > 4096) samples.RemoveRange(0, 2048);
+        samples.Add(sample);
     }
 
     // SetWindowLongPtrW only exists in 64-bit user32; 32-bit exports SetWindowLongW instead.
@@ -203,6 +258,14 @@ public static unsafe class PenInput
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetPointerPenInfo(uint pointerId, out POINTER_PEN_INFO penInfo);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetPointerPenInfoHistory(uint pointerId, ref uint entriesCount, POINTER_PEN_INFO* penInfo);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ScreenToClient(IntPtr hWnd, ref POINT point);
 
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]

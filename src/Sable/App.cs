@@ -97,6 +97,49 @@ internal sealed class App : IDisposable
         textureView = (TextureView)options.TextureView;
     }
 
+    // The pointer the tools follow this frame: the pen's own reports while the pen is in use (they arrive
+    // without Windows' tap/drag threshold and between frames), otherwise the mouse.
+    private Vector2 pointer;
+    private bool usingPen, pointerDown, pointerPressed, pointerReleased;
+    private readonly List<PenInput.Sample> penSamples = new();
+
+    private void UpdatePointer()
+    {
+        penSamples.Clear();
+        PenInput.Drain(penSamples);
+        bool wasDown = pointerDown;
+        usingPen = PenInput.PenDetected
+                   && (PenInput.InContact || penSamples.Count > 0 || Environment.TickCount64 - PenInput.LastPenTime < 250);
+        if (usingPen)
+        {
+            pointer = penSamples.Count > 0 ? penSamples[^1].Position : PenInput.Position;
+            pointerDown = PenInput.InContact;
+            // A tap can start and end between two frames; the samples still show it touched down.
+            bool touched = pointerDown || penSamples.Exists(p => p.InContact);
+            pointerPressed = !wasDown && touched;
+            pointerReleased = (wasDown || pointerPressed) && !pointerDown;
+        }
+        else
+        {
+            pointer = Raylib.GetMousePosition();
+            pointerDown = Raylib.IsMouseButtonDown(MouseButton.Left);
+            pointerPressed = Raylib.IsMouseButtonPressed(MouseButton.Left);
+            pointerReleased = Raylib.IsMouseButtonReleased(MouseButton.Left);
+        }
+    }
+
+    /// <summary>The points a stroke passes through this frame, with pressure: every pen sample, or the mouse.</summary>
+    private IEnumerable<(Vector2 Point, float Pressure)> StrokePoints()
+    {
+        if (!usingPen)
+        {
+            yield return (pointer, 1f);
+            yield break;
+        }
+        foreach (var sample in penSamples)
+            if (sample.InContact) yield return (sample.Position, sample.Pressure);
+    }
+
     private Color PaintColor
     {
         get
@@ -111,10 +154,7 @@ internal sealed class App : IDisposable
         new(Model!.Textures[texture], PaintColor, tool == Tool.Brush ? opacity : 1f, MaskFor(texture));
 
     /// <summary>Pen pressure 0..1 while the pen is drawing; 1 with the mouse.</summary>
-    private static float RawPressure =>
-        PenInput.PenDetected && Environment.TickCount64 - PenInput.LastPenTime < 300
-            ? (PenInput.InContact ? PenInput.Pressure : 0f)
-            : 1f;
+    private float RawPressure => usingPen ? (PenInput.InContact ? PenInput.Pressure : 0f) : 1f;
 
     /// <summary>
     /// Sets flow and size for the next dab from pressure through the curve (gamma above 1 spends more of the pen's
@@ -159,14 +199,15 @@ internal sealed class App : IDisposable
             var (rect3d, rectUv, splitter) = SplitArea(area);
 
             var io = ImGui.GetIO();
+            UpdatePointer();
             Vector2 mouse = Raylib.GetMousePosition();
             bool free = !io.WantCaptureMouse && !draggingSplit && !pickerOpen;
             UpdateSplitter(area, splitter, mouse, free);
 
             var (sMin, sMax) = VisibleBounds();
             view3d.OrbitCenter = SelectionCenter();
-            view3d.Update(rect3d, free && Raylib.CheckCollisionPointRec(mouse, rect3d), sMin, sMax);
-            uvView.Update(rectUv, free && Raylib.CheckCollisionPointRec(mouse, rectUv), state);
+            view3d.Update(rect3d, free && Raylib.CheckCollisionPointRec(pointer, rect3d), pointer, pointerDown, sMin, sMax);
+            uvView.Update(rectUv, free && Raylib.CheckCollisionPointRec(pointer, rectUv), pointer, state);
             profiler.Mark("views");
             HandleShortcuts();
             UpdateTools(free);
@@ -605,7 +646,7 @@ internal sealed class App : IDisposable
         state.Cursor = default;
         sample = default;
         cursorIcon = CursorIcon.System;
-        cursorTip = Raylib.GetMousePosition();
+        cursorTip = pointer;
         bool alt = Raylib.IsKeyDown(KeyboardKey.LeftAlt) || Raylib.IsKeyDown(KeyboardKey.RightAlt);
         try
         {
@@ -647,15 +688,19 @@ internal sealed class App : IDisposable
         bool painting = tool is Tool.Pencil or Tool.Brush;
         // Holding Alt turns any tool into the eyedropper until it's released.
         bool sampling = (tool == Tool.Eyedropper || alt) && stroke == null && lassoDrag == LassoDrag.None;
-        bool pressed = Raylib.IsMouseButtonPressed(MouseButton.Left);
+        bool pressed = pointerPressed;
 
         UpdateLasso(free, pressed && !sampling);
 
         if (stroke != null)
         {
-            if (!Raylib.IsMouseButtonDown(MouseButton.Left)) EndStroke();
-            else if (strokeIn3D) Continue3D();
-            else ContinueUv();
+            // Every point the pen passed through, even on the frame it lifts.
+            foreach (var (point, pressure) in StrokePoints())
+            {
+                if (strokeIn3D) Continue3D(point, pressure);
+                else ContinueUv(point, pressure);
+            }
+            if (!pointerDown) EndStroke();
         }
 
         // 3D view.
@@ -705,7 +750,7 @@ internal sealed class App : IDisposable
             }
         }
 
-        if (selectPressed && Raylib.IsMouseButtonReleased(MouseButton.Left))
+        if (selectPressed && pointerReleased)
         {
             selectPressed = false;
             if (view3d.Hovered && Vector2.Distance(view3d.LocalMouse, selectPressPosition) < 4f)
@@ -759,7 +804,7 @@ internal sealed class App : IDisposable
         var mouse = uvView.MouseTexel;
         if (lassoDrag == LassoDrag.Drawing && state.Lasso != null)
         {
-            if (Raylib.IsMouseButtonDown(MouseButton.Left))
+            if (pointerDown)
             {
                 if (Vector2.Distance(state.Lasso[^1], mouse) >= 0.35f) state.Lasso.Add(mouse);
             }
@@ -771,7 +816,7 @@ internal sealed class App : IDisposable
         }
         if (lassoDrag == LassoDrag.Moving && selectionMove != null && state.Selection != null)
         {
-            if (Raylib.IsMouseButtonDown(MouseButton.Left))
+            if (pointerDown)
             {
                 selectionMove.MoveTo((int)MathF.Round(mouse.X - moveStart.X), (int)MathF.Round(mouse.Y - moveStart.Y), state.Selection);
             }
@@ -912,21 +957,31 @@ internal sealed class App : IDisposable
         strokeTexture = texture;
         strokeIn3D = true;
         stroke = NewStroke(texture);
-        lastPressure = RawPressure;
+        lastPressure = FirstPressure();
         SetDab(lastPressure);
         Dab3D(hit);
         lastMouse = view3d.LocalMouse;
     }
 
-    private void Continue3D()
+    /// <summary>Pressure where a stroke starts: the pen's first touching sample this frame, else the latest.</summary>
+    private float FirstPressure()
     {
-        Vector2 to = view3d.LocalMouse;
-        float spacing = tool == Tool.Pencil ? 1f : MathF.Max(1f, cursorScreenRadius * 0.3f);
+        foreach (var (_, pressure) in StrokePoints()) return pressure;
+        return RawPressure;
+    }
+
+    /// <summary>
+    /// Carries a 3D stroke to <paramref name="screenPoint"/>: dabs every pixel for the pencil, and at a small fraction
+    /// of the brush's screen radius for the brush, so small movements still paint.
+    /// </summary>
+    private void Continue3D(Vector2 screenPoint, float pressure)
+    {
+        Vector2 to = view3d.ScreenToLocal(screenPoint);
+        float spacing = tool == Tool.Pencil ? 1f : MathF.Max(1f, cursorScreenRadius * 0.15f);
         float distance = Vector2.Distance(lastMouse, to);
         if (distance < spacing) return;
         int steps = (int)(distance / spacing);
         var camera = view3d.Camera.ToRaylib();
-        float pressure = RawPressure;
         for (int s = 1; s <= steps; s++)
         {
             SetDab(float.Lerp(lastPressure, pressure, s / (float)steps));
@@ -936,7 +991,7 @@ internal sealed class App : IDisposable
                 && Model.TextureOf(hit.Part) == strokeTexture)
                 Dab3D(hit);
         }
-        lastMouse = to;
+        lastMouse = Vector2.Lerp(lastMouse, to, steps * spacing / distance);
         lastPressure = pressure;
     }
 
@@ -959,7 +1014,7 @@ internal sealed class App : IDisposable
         strokeTexture = state.ActiveTexture;
         strokeIn3D = false;
         stroke = NewStroke(strokeTexture);
-        lastPressure = RawPressure;
+        lastPressure = FirstPressure();
         SetDab(lastPressure);
         if (tool == Tool.Pencil)
         {
@@ -973,22 +1028,23 @@ internal sealed class App : IDisposable
         }
     }
 
-    private void ContinueUv()
+    /// <summary>Carries a UV-view stroke to <paramref name="screenPoint"/>.</summary>
+    private void ContinueUv(Vector2 screenPoint, float pressure)
     {
+        Vector2 texelPoint = uvView.ScreenToTexel(screenPoint);
         if (tool == Tool.Pencil)
         {
-            var texel = ((int)MathF.Floor(uvView.MouseTexel.X), (int)MathF.Floor(uvView.MouseTexel.Y));
+            var texel = ((int)MathF.Floor(texelPoint.X), (int)MathF.Floor(texelPoint.Y));
             if (texel == lastTexel) return;
             Brush.Line(stroke!, lastTexel.X, lastTexel.Y, texel.Item1, texel.Item2, clip: true);
             lastTexel = texel;
             return;
         }
-        Vector2 center = Brush.SnapCenter(uvView.MouseTexel, brushSize);
-        float spacing = MathF.Max(0.5f, brushSize * 0.25f);
+        Vector2 center = Brush.SnapCenter(texelPoint, brushSize);
+        float spacing = MathF.Max(0.35f, brushSize * 0.12f);
         float distance = Vector2.Distance(lastDab, center);
         if (distance < spacing) return;
         int steps = (int)MathF.Ceiling(distance / spacing);
-        float pressure = RawPressure;
         for (int s = 1; s <= steps; s++)
         {
             SetDab(float.Lerp(lastPressure, pressure, s / (float)steps));

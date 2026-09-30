@@ -30,6 +30,7 @@ public sealed class Viewport3D : IDisposable
     private RenderTexture2D target;
     private int width, height;
     private MouseButton navButton = MouseButton.Middle;
+    private Vector2 origin, lastPointer;
 
     public Texture2D Texture => target.Texture;
 
@@ -43,11 +44,16 @@ public sealed class Viewport3D : IDisposable
         navButton = MouseButton.Left;
     }
 
-    public void Update(Rectangle rect, bool hovered, Vector3 frameMin, Vector3 frameMax)
+    /// <param name="pointer">Where the pen or mouse is, in window pixels (the app picks the source).</param>
+    /// <param name="leftDown">Whether the pen tip or left button is down, for left-drag navigation.</param>
+    public void Update(Rectangle rect, bool hovered, Vector2 pointer, bool leftDown, Vector3 frameMin, Vector3 frameMax)
     {
         Resize((int)rect.Width, (int)rect.Height);
         Hovered = hovered;
-        LocalMouse = Raylib.GetMousePosition() - new Vector2(rect.X, rect.Y);
+        origin = new Vector2(rect.X, rect.Y);
+        LocalMouse = pointer - origin;
+        Vector2 delta = pointer - lastPointer;
+        lastPointer = pointer;
 
         bool shift = Raylib.IsKeyDown(KeyboardKey.LeftShift) || Raylib.IsKeyDown(KeyboardKey.RightShift);
         bool ctrl = Raylib.IsKeyDown(KeyboardKey.LeftControl) || Raylib.IsKeyDown(KeyboardKey.RightControl);
@@ -57,11 +63,11 @@ public sealed class Viewport3D : IDisposable
             Navigating = true;
             navButton = MouseButton.Middle;
         }
-        if (Navigating && !Raylib.IsMouseButtonDown(navButton)) Navigating = false;
+        bool held = navButton == MouseButton.Left ? leftDown : Raylib.IsMouseButtonDown(navButton);
+        if (Navigating && !held) Navigating = false;
 
         if (Navigating)
         {
-            Vector2 delta = Raylib.GetMouseDelta();
             if (shift) Camera.Pan(delta, rect.Height);
             else if (ctrl) Camera.Zoom(MathF.Exp(delta.Y * 0.01f));
             else Camera.Orbit(delta, OrbitCenter);
@@ -86,6 +92,9 @@ public sealed class Viewport3D : IDisposable
     }
 
     private static bool ViewKey(KeyboardKey numpad, KeyboardKey row) => Raylib.IsKeyPressed(numpad) || Raylib.IsKeyPressed(row);
+
+    /// <summary>A window position in this view's pixels.</summary>
+    public Vector2 ScreenToLocal(Vector2 screen) => screen - origin;
 
     /// <summary>The ray under the mouse, in world space.</summary>
     public Ray MouseRay() => Raylib.GetScreenToWorldRayEx(LocalMouse, Camera.ToRaylib(), width, height);
