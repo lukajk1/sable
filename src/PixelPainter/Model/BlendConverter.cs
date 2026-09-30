@@ -31,8 +31,12 @@ public static class BlendConverter
         return Version.TryParse(digits, out var v) ? v : new Version(0, 0);
     }
 
-    /// <summary>Exports <paramref name="blendPath"/> to a temporary .glb and returns its path. Blocks until done.</summary>
-    public static string Convert(string blendPath, Action<string> report)
+    /// <summary>
+    /// Exports <paramref name="blendPath"/> to a temporary .glb and returns its path. Blocks until done.
+    /// <paramref name="imageFiles"/> maps material names to the image file each one's texture node reads (unpacked
+    /// images only), so painting can be saved back to the file the .blend (and Unity) actually use.
+    /// </summary>
+    public static string Convert(string blendPath, Action<string> report, out Dictionary<string, string> imageFiles)
     {
         string blender = FindBlender() ?? throw new InvalidOperationException(
             "Blender not found. Install it under Program Files/Blender Foundation or set PIXELPAINTER_BLENDER.");
@@ -42,12 +46,24 @@ public static class BlendConverter
         string outDir = Path.Combine(Path.GetTempPath(), "PixelPainter");
         Directory.CreateDirectory(outDir);
         string outPath = Path.Combine(outDir, $"{Path.GetFileNameWithoutExtension(full)}-{hash}.glb");
+        string mapPath = Path.ChangeExtension(outPath, ".images.json");
         if (File.Exists(outPath)) File.Delete(outPath);
+        if (File.Exists(mapPath)) File.Delete(mapPath);
 
         // Everything in the file, modifiers applied; cameras and lights are left out by default.
         string script =
-            "import bpy\n" +
-            $"bpy.ops.export_scene.gltf(filepath=r'{outPath}', export_format='GLB', export_apply=True, use_visible=False)\n";
+            "import bpy, json\n" +
+            $"bpy.ops.export_scene.gltf(filepath=r'{outPath}', export_format='GLB', export_apply=True, use_visible=False)\n" +
+            "images = {}\n" +
+            "for mat in bpy.data.materials:\n" +
+            "    tree = getattr(mat, 'node_tree', None)\n" +
+            "    if not tree: continue\n" +
+            "    for node in tree.nodes:\n" +
+            "        img = getattr(node, 'image', None)\n" +
+            "        if node.type == 'TEX_IMAGE' and img and img.source == 'FILE' and not img.packed_file:\n" +
+            "            images[mat.name] = bpy.path.abspath(img.filepath, library=img.library)\n" +
+            "            break\n" +
+            $"json.dump(images, open(r'{mapPath}', 'w'))\n";
 
         report($"Converting with {Path.GetFileName(Path.GetDirectoryName(blender))}...");
         var psi = new ProcessStartInfo(blender)
@@ -72,6 +88,15 @@ public static class BlendConverter
             string log = (stderr.Result + "\n" + stdout.Result).Trim();
             string tail = log.Length > 600 ? log[^600..] : log;
             throw new InvalidOperationException($"Blender did not produce a .glb (exit {process.ExitCode}).\n{tail}");
+        }
+
+        imageFiles = new Dictionary<string, string>();
+        if (File.Exists(mapPath))
+        {
+            var map = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(mapPath));
+            if (map != null)
+                foreach (var (material, file) in map)
+                    if (File.Exists(file)) imageFiles[material] = Path.GetFullPath(file);
         }
         return outPath;
     }

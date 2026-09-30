@@ -17,8 +17,9 @@ public static class ModelLoader
     public static LoadedModel Load(string path, Action<string> report)
     {
         string source = Path.GetFullPath(path);
+        var blendImages = new Dictionary<string, string>();
         string import = Path.GetExtension(source).Equals(".blend", StringComparison.OrdinalIgnoreCase)
-            ? BlendConverter.Convert(source, report)
+            ? BlendConverter.Convert(source, report, out blendImages)
             : source;
 
         report("Importing...");
@@ -34,11 +35,13 @@ public static class ModelLoader
 
         var model = new LoadedModel { SourcePath = source, ImportedPath = import };
         var textureLookup = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var textures = new TextureContext(scene, Path.GetDirectoryName(source)!, model, textureLookup, blendImages);
 
         foreach (var material in scene.Materials)
-            model.Materials.Add(ReadMaterial(material, scene, Path.GetDirectoryName(source)!, model, textureLookup));
+            model.Materials.Add(ReadMaterial(material, textures));
         if (model.Materials.Count == 0) model.Materials.Add(new MaterialInfo { Name = "(default)" });
 
+        report("Finding submeshes...");
         var min = new Vector3(float.MaxValue);
         var max = new Vector3(float.MinValue);
         Walk(scene.RootNode, System.Numerics.Matrix4x4.Identity);
@@ -48,14 +51,20 @@ public static class ModelLoader
             System.Numerics.Matrix4x4.Invert(world, out var inverse);
             var normalMatrix = System.Numerics.Matrix4x4.Transpose(inverse);
 
+            SceneObject? obj = null;
             foreach (int meshIndex in node.MeshIndices)
             {
-                var part = ReadPart(scene, scene.Meshes[meshIndex], node, world, normalMatrix, model);
+                obj ??= new SceneObject { Name = string.IsNullOrWhiteSpace(node.Name) ? "(unnamed)" : node.Name };
+                var part = ReadPart(scene.Meshes[meshIndex], node, obj, model.Objects.Count, world, normalMatrix, model);
                 if (part == null) continue;
+                obj.Parts.Add(model.Parts.Count);
                 model.Parts.Add(part);
+                obj.Min = obj.Parts.Count == 1 ? part.Min : Vector3.Min(obj.Min, part.Min);
+                obj.Max = obj.Parts.Count == 1 ? part.Max : Vector3.Max(obj.Max, part.Max);
                 min = Vector3.Min(min, part.Min);
                 max = Vector3.Max(max, part.Max);
             }
+            if (obj is { Parts.Count: > 0 }) model.Objects.Add(obj);
             foreach (var child in node.Children) Walk(child, world);
         }
 
@@ -65,7 +74,7 @@ public static class ModelLoader
         return model;
     }
 
-    private static MeshPart? ReadPart(Scene scene, Mesh mesh, Node node, System.Numerics.Matrix4x4 world,
+    private static MeshPart? ReadPart(Mesh mesh, Node node, SceneObject obj, int objectIndex, System.Numerics.Matrix4x4 world,
         System.Numerics.Matrix4x4 normalMatrix, LoadedModel model)
     {
         if (!mesh.HasVertices) return null;
@@ -97,31 +106,38 @@ public static class ModelLoader
             uvs = new Vector2[count];
             for (int i = 0; i < count; i++) uvs[i] = new Vector2(channel[i].X, channel[i].Y);
         }
-        else
+        else if (obj.Parts.Count == 0)
         {
-            model.Warnings.Add($"{node.Name}: no UVs");
+            model.Warnings.Add($"{obj.Name}: no UVs");
         }
 
         int materialIndex = mesh.MaterialIndex >= 0 && mesh.MaterialIndex < model.Materials.Count ? mesh.MaterialIndex : 0;
-        // An object with several material slots becomes one part per slot.
-        string name = node.MeshCount > 1 ? $"{node.Name} [{model.Materials[materialIndex].Name}]" : node.Name;
-        if (string.IsNullOrWhiteSpace(name)) name = string.IsNullOrWhiteSpace(mesh.Name) ? "(unnamed)" : mesh.Name;
+        var indexArray = indices.ToArray();
+        var components = Topology.Components(positions, indexArray, out int componentCount);
+        // An object with several material slots is drawn as one part per slot.
+        string name = node.MeshCount > 1 ? $"{obj.Name} [{model.Materials[materialIndex].Name}]" : obj.Name;
 
         return new MeshPart
         {
             Name = name,
+            ObjectIndex = objectIndex,
             MaterialIndex = materialIndex,
             Positions = positions,
             Normals = normals,
             Uvs = uvs,
-            Indices = indices.ToArray(),
+            Indices = indexArray,
             Min = min,
             Max = max,
+            TriangleComponent = components,
+            ComponentCount = componentCount,
+            ComponentHidden = new bool[componentCount],
         };
     }
 
-    private static MaterialInfo ReadMaterial(Material material, Scene scene, string modelDir, LoadedModel model,
-        Dictionary<string, int> textureLookup)
+    private sealed record TextureContext(Scene Scene, string ModelDir, LoadedModel Model, Dictionary<string, int> Lookup,
+        Dictionary<string, string> BlendImages);
+
+    private static MaterialInfo ReadMaterial(Material material, TextureContext context)
     {
         var color = material.HasColorDiffuse
             ? new Vector4(material.ColorDiffuse.R, material.ColorDiffuse.G, material.ColorDiffuse.B, material.ColorDiffuse.A)
@@ -131,7 +147,7 @@ public static class ModelLoader
         if (material.GetMaterialTexture(TextureType.Diffuse, 0, out var slot) ||
             material.GetMaterialTexture(TextureType.BaseColor, 0, out slot))
         {
-            textureIndex = FindTexture(slot.FilePath, material.Name, scene, modelDir, model, textureLookup);
+            textureIndex = FindTexture(slot.FilePath, material.Name, context);
         }
 
         return new MaterialInfo
@@ -142,15 +158,21 @@ public static class ModelLoader
         };
     }
 
-    private static int FindTexture(string? reference, string materialName, Scene scene, string modelDir, LoadedModel model,
-        Dictionary<string, int> lookup)
+    private static int FindTexture(string? reference, string materialName, TextureContext context)
     {
         if (string.IsNullOrEmpty(reference)) return -1;
-        if (lookup.TryGetValue(reference, out int known)) return known;
+        // A .blend's images are embedded in the exported .glb; prefer the file the .blend reads, so saves land there.
+        string key = context.BlendImages.TryGetValue(materialName ?? "", out string? blendFile) ? blendFile : reference;
+        if (context.Lookup.TryGetValue(key, out int known)) return known;
 
+        var model = context.Model;
         TextureSource? source = null;
-        var embedded = scene.GetEmbeddedTexture(reference);
-        if (embedded != null)
+        var embedded = blendFile == null ? context.Scene.GetEmbeddedTexture(reference) : null;
+        if (blendFile != null)
+        {
+            source = FromFile(blendFile);
+        }
+        else if (embedded != null)
         {
             if (embedded.IsCompressed && embedded.HasCompressedData)
             {
@@ -170,14 +192,12 @@ public static class ModelLoader
             string? file = new[]
             {
                 reference,
-                Path.Combine(modelDir, reference),
-                Path.Combine(modelDir, Path.GetFileName(reference)),
+                Path.Combine(context.ModelDir, reference),
+                Path.Combine(context.ModelDir, Path.GetFileName(reference)),
             }.FirstOrDefault(File.Exists);
 
-            if (file != null)
-                source = new TextureSource { Name = Path.GetFileName(file), Data = File.ReadAllBytes(file), FileType = Path.GetExtension(file).ToLowerInvariant() };
-            else
-                model.Warnings.Add($"texture not found: {reference}");
+            if (file != null) source = FromFile(Path.GetFullPath(file));
+            else model.Warnings.Add($"texture not found: {reference}");
         }
 
         int index = -1;
@@ -186,9 +206,17 @@ public static class ModelLoader
             index = model.Textures.Count;
             model.Textures.Add(source);
         }
-        lookup[reference] = index;
+        context.Lookup[key] = index;
         return index;
     }
+
+    private static TextureSource FromFile(string file) => new()
+    {
+        Name = Path.GetFileName(file),
+        Data = File.ReadAllBytes(file),
+        FileType = Path.GetExtension(file).ToLowerInvariant(),
+        FilePath = file,
+    };
 
     private static Vector3 ToNumerics(Vector3D v) => new(v.X, v.Y, v.Z);
 

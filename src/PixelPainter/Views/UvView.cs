@@ -5,18 +5,20 @@ using Raylib_cs;
 namespace PixelPainter.Views;
 
 /// <summary>
-/// The UV view: the part's texture (point-filtered) with the UV layout drawn over it. MMB drag pans, the wheel
-/// zooms around the cursor, Home fits the texture. A texel grid appears once texels are big enough to see.
+/// The UV view: the active texture (point-filtered) with the active object's UV layout over it. MMB drag pans, the
+/// wheel zooms around the cursor, Home fits the texture. A texel grid appears once texels are big enough to see.
 /// Without a texture, the layout is drawn over an empty 0-1 square.
 /// </summary>
 public sealed class UvView : IDisposable
 {
     public bool PixelGrid = true;
-    /// <summary>Also draw, dimmed, the other parts that share the selected part's texture.</summary>
+    /// <summary>Also draw, dimmed, other objects that use the same texture.</summary>
     public bool ShowSiblings = true;
 
-    /// <summary>Texel under the mouse (x right, y down), when over the texture area.</summary>
-    public (int X, int Y)? HoverTexel { get; private set; }
+    public bool Hovered { get; private set; }
+    /// <summary>Mouse position in texels (x right, y down; may be outside the texture).</summary>
+    public Vector2 MouseTexel { get; private set; }
+    public bool MouseOnTexture => MouseTexel.X >= 0 && MouseTexel.Y >= 0 && MouseTexel.X < TextureSize.X && MouseTexel.Y < TextureSize.Y;
     public Vector2 TextureSize { get; private set; } = new(EmptySize);
 
     private const int EmptySize = 256;
@@ -32,10 +34,11 @@ public sealed class UvView : IDisposable
 
     public void RequestFit() => fitPending = true;
 
-    public void Update(Rectangle rect, bool hovered, GpuModel? model, int selected)
+    public void Update(Rectangle rect, bool hovered, EditorState state)
     {
         Resize((int)rect.Width, (int)rect.Height);
-        TextureSize = ResolveTexture(model, selected, out _);
+        Hovered = hovered;
+        TextureSize = SizeOf(state);
         if (TextureSize != lastSize) { fitPending = true; lastSize = TextureSize; }
         if (fitPending) Fit();
 
@@ -57,13 +60,7 @@ public sealed class UvView : IDisposable
             if (Raylib.IsKeyPressed(KeyboardKey.Home)) Fit();
         }
 
-        HoverTexel = null;
-        if (hovered)
-        {
-            Vector2 texel = (local - offset) / zoom;
-            if (texel.X >= 0 && texel.Y >= 0 && texel.X < TextureSize.X && texel.Y < TextureSize.Y)
-                HoverTexel = ((int)texel.X, (int)texel.Y);
-        }
+        MouseTexel = (local - offset) / zoom;
     }
 
     private void Fit()
@@ -74,29 +71,26 @@ public sealed class UvView : IDisposable
         fitPending = false;
     }
 
-    private static Vector2 ResolveTexture(GpuModel? model, int selected, out int textureIndex)
+    private static Vector2 SizeOf(EditorState state)
     {
-        textureIndex = -1;
-        if (model == null) return new Vector2(EmptySize);
-        textureIndex = selected >= 0 ? model.TextureOf(selected) : (model.Textures.Count > 0 ? 0 : -1);
-        if (textureIndex < 0) return new Vector2(EmptySize);
-        var t = model.Textures[textureIndex];
+        if (state.Model == null || state.ActiveTexture < 0) return new Vector2(EmptySize);
+        var t = state.Model.Textures[state.ActiveTexture];
         return new Vector2(t.Width, t.Height);
     }
 
-    public void Render(GpuModel? model, int selected)
+    public void Render(EditorState state)
     {
         if (width <= 0 || height <= 0) return;
         Raylib.BeginTextureMode(target);
         Raylib.ClearBackground(new Color(40, 40, 40, 255));
 
-        ResolveTexture(model, selected, out int textureIndex);
+        var model = state.Model;
         var area = new Rectangle(offset.X, offset.Y, TextureSize.X * zoom, TextureSize.Y * zoom);
 
-        if (textureIndex >= 0)
+        if (model != null && state.ActiveTexture >= 0)
         {
             DrawChecker(area);
-            var texture = model!.Textures[textureIndex];
+            var texture = model.Textures[state.ActiveTexture].Gpu;
             Raylib.DrawTexturePro(texture, new Rectangle(0, 0, texture.Width, texture.Height), area, Vector2.Zero, 0, Color.White);
             if (PixelGrid && zoom >= 6f) DrawTexelGrid(area);
         }
@@ -107,34 +101,72 @@ public sealed class UvView : IDisposable
         }
         Raylib.DrawRectangleLinesEx(area, 1, new Color(110, 110, 110, 255));
 
-        if (model != null) DrawLayout(model, selected, textureIndex);
+        if (model != null) DrawLayout(state, model);
+        DrawCursor(state);
 
         Raylib.EndTextureMode();
     }
 
-    private void DrawLayout(GpuModel model, int selected, int textureIndex)
+    private void DrawLayout(EditorState state, GpuModel model)
     {
         var parts = model.Source.Parts;
+        int texture = state.ActiveTexture;
+        bool UsesTexture(int p) => texture < 0 || model.TextureOf(p) == texture;
+
+        var dim = new Color(170, 170, 170, 80);
+        var normal = new Color(225, 225, 225, 190);
+        var orange = new Color(255, 160, 40, 255);
+
+        // Other objects first, dimmed (or, with nothing selected, every object on this texture).
         for (int i = 0; i < parts.Count; i++)
         {
-            if (i == selected || !parts[i].Visible || parts[i].Uvs == null) continue;
-            bool sibling = selected >= 0 && textureIndex >= 0 && model.TextureOf(i) == textureIndex;
-            if (selected >= 0 && !(ShowSiblings && sibling)) continue;
-            DrawPartUvs(model, i, selected >= 0 ? new Color(170, 170, 170, 90) : new Color(225, 225, 225, 190));
+            if (!state.PartVisible(i) || parts[i].Uvs == null || !UsesTexture(i)) continue;
+            if (parts[i].ObjectIndex == state.ActiveObject) continue;
+            if (state.ActiveObject >= 0 && !(ShowSiblings && texture >= 0)) continue;
+            DrawPartUvs(model, i, state.ActiveObject >= 0 ? dim : normal, -1);
         }
-        if (selected >= 0 && parts[selected].Uvs != null) DrawPartUvs(model, selected, new Color(255, 160, 40, 255));
+        if (state.ActiveObject < 0) return;
+
+        foreach (int p in model.Source.Objects[state.ActiveObject].Parts)
+        {
+            if (!state.PartVisible(p) || parts[p].Uvs == null || !UsesTexture(p)) continue;
+            DrawPartUvs(model, p, state.Mode == SelectMode.Object ? orange : normal, -1);
+        }
+        if (state.Mode == SelectMode.Submesh && state.Submesh is { } sub && parts[sub.Part].Uvs != null && UsesTexture(sub.Part))
+            DrawPartUvs(model, sub.Part, orange, sub.Component);
     }
 
-    private void DrawPartUvs(GpuModel model, int part, Color color)
+    private void DrawPartUvs(GpuModel model, int part, Color color, int onlyComponent)
     {
-        var uvs = model.Source.Parts[part].Uvs!;
+        var source = model.Source.Parts[part];
+        var uvs = source.Uvs!;
         var edges = model.Edges[part];
         Vector2 scale = TextureSize * zoom;
-        for (int e = 0; e < edges.Length; e += 2)
+        for (int e = 0; e < edges.A.Length; e++)
         {
-            Vector2 a = offset + uvs[edges[e]] * scale;
-            Vector2 b = offset + uvs[edges[e + 1]] * scale;
-            Raylib.DrawLineV(a, b, color);
+            int component = edges.Component[e];
+            if (source.ComponentHidden[component]) continue;
+            if (onlyComponent >= 0 && component != onlyComponent) continue;
+            Raylib.DrawLineV(offset + uvs[edges.A[e]] * scale, offset + uvs[edges.B[e]] * scale, color);
+        }
+    }
+
+    private void DrawCursor(EditorState state)
+    {
+        var cursor = state.Cursor;
+        if (!cursor.Visible) return;
+        if (cursor.Pencil)
+        {
+            var rect = new Rectangle(offset.X + cursor.Texel.X * zoom, offset.Y + cursor.Texel.Y * zoom, zoom, zoom);
+            Raylib.DrawRectangleLinesEx(new Rectangle(rect.X - 1, rect.Y - 1, rect.Width + 2, rect.Height + 2), 1, new Color(0, 0, 0, 180));
+            Raylib.DrawRectangleLinesEx(rect, 1, Color.White);
+        }
+        else
+        {
+            Vector2 center = offset + cursor.TexelCenter * zoom;
+            float radius = MathF.Max(cursor.TexelRadius * zoom, 2f);
+            Raylib.DrawCircleLinesV(center, radius + 1, new Color(0, 0, 0, 160));
+            Raylib.DrawCircleLinesV(center, radius, Color.White);
         }
     }
 
@@ -179,8 +211,7 @@ public sealed class UvView : IDisposable
         w = Math.Max(w, 1);
         h = Math.Max(h, 1);
         if (w == width && h == height) return;
-        bool first = width == 0;
-        if (!first)
+        if (width > 0)
         {
             // Keep the texture centred where it was when the view changes size.
             offset += new Vector2(w - width, h - height) * 0.5f;

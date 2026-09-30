@@ -69,6 +69,11 @@ public sealed class OrbitCamera
         Distance = radius / MathF.Sin(FovDegrees * MathF.PI / 360f) * 1.05f;
     }
 
+    public (Vector3 Pivot, float Yaw, float Pitch, float Distance, bool Ortho) Save() => (Pivot, Yaw, Pitch, Distance, Ortho);
+
+    public void Restore((Vector3 Pivot, float Yaw, float Pitch, float Distance, bool Ortho) saved) =>
+        (Pivot, Yaw, Pitch, Distance, Ortho) = saved;
+
     public void SetView(float yawDegrees, float pitchDegrees)
     {
         Yaw = yawDegrees * MathF.PI / 180f;
