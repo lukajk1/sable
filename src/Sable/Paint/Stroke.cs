@@ -69,8 +69,17 @@ public sealed class Stroke
     }
 }
 
+/// <summary>Something Ctrl+Z can take back: a stroke, or a change to what's hidden.</summary>
+public interface IUndoStep
+{
+    void Undo();
+    void Redo();
+    /// <summary>Roughly how much memory the step holds, for the stack's cap.</summary>
+    long Bytes { get; }
+}
+
 /// <summary>A changed rectangle of one texture, before and after.</summary>
-public sealed class UndoStep
+public sealed class UndoStep : IUndoStep
 {
     private readonly PaintTexture texture;
     private readonly int x, y, width, height;
@@ -115,14 +124,14 @@ public sealed class UndoStep
 public sealed class UndoStack
 {
     private const long MaxBytes = 256L * 1024 * 1024;
-    private readonly LinkedList<UndoStep> undo = new();
-    private readonly Stack<UndoStep> redo = new();
+    private readonly LinkedList<IUndoStep> undo = new();
+    private readonly Stack<IUndoStep> redo = new();
     private long bytes;
 
     public bool CanUndo => undo.Count > 0;
     public bool CanRedo => redo.Count > 0;
 
-    public void Push(UndoStep step)
+    public void Push(IUndoStep step)
     {
         undo.AddLast(step);
         bytes += step.Bytes;

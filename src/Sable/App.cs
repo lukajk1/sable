@@ -653,7 +653,7 @@ internal sealed class App : IDisposable
             if (shift) view3d.Wireframe = !view3d.Wireframe;
             else tool = Tool.Zoom;
         }
-        if (Raylib.IsKeyPressed(KeyboardKey.H)) { if (alt) Reveal(); else if (shift) HideUnselected(); else HideSelected(); }
+        if (Raylib.IsKeyPressed(KeyboardKey.H)) RecordVisibility(alt ? Reveal : shift ? HideUnselected : HideSelected);
         if (Raylib.IsKeyPressed(KeyboardKey.Slash) || Raylib.IsKeyPressed(KeyboardKey.KpDivide)) ToggleLocalView();
         if (view3d.Hovered && (Raylib.IsKeyPressed(KeyboardKey.F) || Raylib.IsKeyPressed(KeyboardKey.KpDecimal)))
         {
@@ -699,6 +699,15 @@ internal sealed class App : IDisposable
         if (part.ObjectIndex != state.ActiveObject) SelectObject(part.ObjectIndex);
         if (state.Mode == SelectMode.Submesh) state.Submesh = (h.Part, part.TriangleComponent[h.Triangle]);
         if (Model.TextureOf(h.Part) >= 0) state.ActiveTexture = Model.TextureOf(h.Part);
+    }
+
+    /// <summary>Runs a hide or reveal as one undoable step (only if it changed anything).</summary>
+    private void RecordVisibility(Action change)
+    {
+        if (Model == null) return;
+        var before = VisibilityStep.Snapshot(Model);
+        change();
+        if (VisibilityStep.IfChanged(Model, before) is { } step) undo.Push(step);
     }
 
     private void HideSelected()
@@ -1692,7 +1701,7 @@ internal sealed class App : IDisposable
             {
                 var obj = source.Objects[i];
                 bool visible = !obj.Hidden;
-                if (ImGui.Checkbox($"##vis{i}", ref visible)) obj.Hidden = !visible;
+                if (ImGui.Checkbox($"##vis{i}", ref visible)) RecordVisibility(() => obj.Hidden = !visible);
                 ImGui.SameLine();
                 bool hasUvs = obj.Parts.Any(p => source.Parts[p].HasUvs);
                 if (!hasUvs) ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.55f, 0.45f, 1f));
@@ -2072,6 +2081,29 @@ internal sealed class App : IDisposable
                     using var imported = PaintTexture.FromEncoded("imported", ".png", File.ReadAllBytes(Path.Combine(dir, "uv_over.png")), null);
                     int lineTexels = imported.Pixels.Count(c => c is { R: 255, G: 255, B: 255 });
                     Console.WriteLine($"[selftest] UV export: {dir}; re-imported {imported.Width}x{imported.Height} (expect {tex.Width * 4}x{tex.Height * 4}), {lineTexels} white line pixels");
+                }
+
+                // Hiding is undoable: hide an object and a submesh of another, undo, redo, undo.
+                {
+                    int other = source.Objects.FindIndex(o => o.Parts.Any(p => source.Parts[p].ComponentCount > 1));
+                    int part = other >= 0 ? source.Objects[other].Parts.First(p => source.Parts[p].ComponentCount > 1) : -1;
+                    if (other >= 0)
+                    {
+                        RecordVisibility(() =>
+                        {
+                            source.Objects[0].Hidden = true;
+                            source.Parts[part].ComponentHidden[0] = true;
+                            Model.RebuildPart(part);
+                        });
+                        string Seen() => $"object hidden {source.Objects[0].Hidden}, submesh hidden {source.Parts[part].ComponentHidden[0]}";
+                        string hidden = Seen();
+                        undo.Undo();
+                        string undone = Seen();
+                        undo.Redo();
+                        string redone = Seen();
+                        undo.Undo();
+                        Console.WriteLine($"[selftest] hide: [{hidden}] undo: [{undone}] redo: [{redone}]");
+                    }
                 }
 
                 tool = Tool.Brush;

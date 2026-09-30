@@ -61,7 +61,7 @@ Painting goes to the active object only, in either view:
 | X | Lasso (UV view): drag to select texels, Shift adds, Ctrl subtracts; drag inside the selection to move those texels (leaves them transparent), Ctrl+drag to move a copy; click outside, Ctrl+D or Esc to deselect. Painting stays inside the selection |
 | W / Q | Brush bigger / smaller |
 | D | Colour picker (hue ring around a saturation/value square) at the cursor; D or Esc closes it |
-| Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y | Undo, redo (per stroke) |
+| Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y | Undo, redo: each stroke, fill, selection move, and hide/reveal (H, Shift+H, Alt+H, the object checkboxes) |
 | Ctrl+S | Save changed textures |
 
 Opacity and Flow work as in Photoshop and Krita. Flow is how much each dab adds, so with low flow going over a spot again within a stroke deepens it; Opacity is the ceiling one stroke can reach. Both sliders are on a log scale, so most of their travel is in the low range.
