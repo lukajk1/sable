@@ -31,7 +31,7 @@ Open models by dropping them on the window, with File > Open (Ctrl+O), or on the
 | Numpad . or F | Frame the selection |
 | Home | Frame everything |
 | / (or numpad /) | Local view: only the active object, framed; again to go back |
-| Z | Wireframe |
+| Z | Wireframe overlay (off by default; the selected submesh stays outlined in Submesh mode) |
 
 UV view: middle drag pans, the wheel zooms around the cursor, and Home fits the texture. The status bar shows the texel under the cursor.
 
@@ -74,6 +74,8 @@ If a frame takes over 40 ms, the status bar says so for a few seconds and a line
 On the model the brush paints every texel whose point on the surface falls inside the brush, so strokes carry across UV seams; it only paints faces turned the same way as the one under the cursor. Objects with UVs but no texture get a **New texture** button in the panel, filled with the material colour.
 
 Saving writes each changed texture back to its file. For a `.blend`, that is the image file the .blend itself uses (found by asking Blender), so Unity reimports it. Textures without a file (embedded or new) go next to the model as `<model>_<texture>.png`, and need hooking up to the material in Blender.
+
+Settings are kept between sessions in `%APPDATA%\Sable\settings.json`: colour, brush size, hardness, opacity, flow, the pressure options, texture view, lighting, grid, wireframe, the UV view toggles, the split between the views, the new-texture size and the window. The scene isn't (camera, selection, hidden objects), and the tool always starts as Select. `--frames N` quits after N frames, saving settings as a normal close does; `SABLE_SETTINGS` points at a different settings file.
 
 Ctrl+R reloads the model from disk.
 

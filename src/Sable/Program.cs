@@ -26,6 +26,8 @@ internal sealed class AppOptions
     public bool SelfTest { get; private set; }
     /// <summary>Starting texture view for the 3D view: 0 pixel, 1 smooth, 2 smooth + mipmaps.</summary>
     public int TextureView { get; private set; }
+    /// <summary>Quit after this many frames (0 = run until closed), saving settings as on a normal close.</summary>
+    public int QuitAfterFrames { get; private set; }
 
     public static AppOptions Parse(string[] args)
     {
@@ -37,6 +39,7 @@ internal sealed class AppOptions
                 case "--screenshot" when i + 1 < args.Length: options.ScreenshotPath = Path.GetFullPath(args[++i]); break;
                 case "--select" when i + 1 < args.Length: options.SelectPart = args[++i]; break;
                 case "--selftest": options.SelfTest = true; break;
+                case "--frames" when i + 1 < args.Length: options.QuitAfterFrames = int.TryParse(args[++i], out int f) ? f : 0; break;
                 case "--texview" when i + 1 < args.Length: options.TextureView = int.TryParse(args[++i], out int v) ? Math.Clamp(v, 0, 2) : 0; break;
                 default: if (!args[i].StartsWith("--")) options.ModelPath = args[i]; break;
             }

@@ -148,13 +148,17 @@ public sealed class Viewport3D : IDisposable
     {
         var parts = model.Source.Parts;
         var orange = new Color(255, 160, 40, 255);
-        for (int i = 0; i < parts.Count; i++)
+        // With the wireframe off, only the selected submesh stays outlined: nothing else shows which piece it is.
+        if (Wireframe)
         {
-            if (!state.PartVisible(i)) continue;
-            bool active = parts[i].ObjectIndex == state.ActiveObject;
-            if (active && state.Mode == SelectMode.Object) DrawEdges(model, i, orange, -1);
-            else if (active) DrawEdges(model, i, new Color(10, 10, 10, 150), -1);
-            else if (Wireframe) DrawEdges(model, i, new Color(20, 20, 20, 140), -1);
+            for (int i = 0; i < parts.Count; i++)
+            {
+                if (!state.PartVisible(i)) continue;
+                bool active = parts[i].ObjectIndex == state.ActiveObject;
+                if (active && state.Mode == SelectMode.Object) DrawEdges(model, i, orange, -1);
+                else if (active) DrawEdges(model, i, new Color(10, 10, 10, 150), -1);
+                else DrawEdges(model, i, new Color(20, 20, 20, 140), -1);
+            }
         }
         if (state.Mode == SelectMode.Submesh && state.Submesh is { } sub && state.PartVisible(sub.Part))
             DrawEdges(model, sub.Part, orange, sub.Component);

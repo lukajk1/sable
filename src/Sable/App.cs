@@ -90,6 +90,7 @@ internal sealed class App : IDisposable
     private int screenshotFrames = -1;
     private int selfTestStep = -1;
     private bool quit;
+    private int framesRun;
 
     public App(AppOptions options)
     {
@@ -179,6 +180,7 @@ internal sealed class App : IDisposable
         Raylib.InitWindow(1600, 900, "Sable");
         unsafe { PenInput.Attach((IntPtr)Raylib.GetWindowHandle()); }
         Raylib.SetWindowMinSize(900, 560);
+        ApplySettings();
         Raylib.SetExitKey(KeyboardKey.Null);
         rlImGui.Setup(true);
         shader = new LitShader();
@@ -250,6 +252,7 @@ internal sealed class App : IDisposable
             Raylib.EndDrawing();
             profiler.Mark("present");
             profiler.EndFrame(FrameContext());
+            if (options.QuitAfterFrames > 0 && ++framesRun >= options.QuitAfterFrames) quit = true;
         }
     }
 
@@ -1443,6 +1446,7 @@ internal sealed class App : IDisposable
         DrawPressureSection();
         ImGui.SetNextItemWidth(150);
         ImGui.SliderFloat("Lighting", ref view3d.Shade, 0f, 1f, view3d.Shade <= 0 ? "flat" : "%.2f");
+        ImGui.Checkbox("Wireframe (Z)", ref view3d.Wireframe);
         ImGui.SetNextItemWidth(150);
         int viewIndex = (int)textureView;
         if (ImGui.Combo("Texture view", ref viewIndex, TextureViewNames, TextureViewNames.Length)) textureView = (TextureView)viewIndex;
@@ -1708,8 +1712,93 @@ internal sealed class App : IDisposable
         quit = true;
     }
 
+    /// <summary>
+    /// Settings are read at start and written on close. Screenshot and self-test runs leave them alone, so they
+    /// start from the defaults and don't overwrite what the user set.
+    /// </summary>
+    private bool KeepsSettings => options.ScreenshotPath == null && !options.SelfTest;
+
+    private void ApplySettings()
+    {
+        if (!KeepsSettings) return;
+        var saved = Settings.Load();
+        if (saved.Hsv is { Length: 3 }) hsv = new Vector3(saved.Hsv[0], saved.Hsv[1], saved.Hsv[2]);
+        brushSize = Math.Clamp(saved.BrushSize, 1f, 256f);
+        dabSize = brushSize;
+        hardness = Math.Clamp(saved.Hardness, 0f, 1f);
+        opacity = Math.Clamp(saved.Opacity, 0.01f, 1f);
+        flow = Math.Clamp(saved.Flow, 0.01f, 1f);
+        pressureToFlow = saved.PressureToFlow;
+        pressureToSize = saved.PressureToSize;
+        pressureCurve = Math.Clamp(saved.PressureCurve, 0.4f, 3f);
+        if (options.TextureView == 0) textureView = (TextureView)Math.Clamp(saved.TextureView, 0, 2);
+        view3d.Shade = Math.Clamp(saved.Lighting, 0f, 1f);
+        view3d.Grid = saved.Grid;
+        view3d.Wireframe = saved.Wireframe;
+        uvView.PixelGrid = saved.UvTexelGrid;
+        uvView.ShowSiblings = saved.UvShowSiblings;
+        split = Math.Clamp(saved.Split, 0.15f, 0.85f);
+        if (TextureSizes.Contains(saved.NewTextureSize)) newTextureSize = saved.NewTextureSize;
+
+        // Only restore a window placement that is still on a monitor.
+        if (saved.WindowWidth >= 900 && saved.WindowHeight >= 560)
+        {
+            Raylib.SetWindowSize(saved.WindowWidth, saved.WindowHeight);
+            bool onScreen = false;
+            for (int m = 0; m < Raylib.GetMonitorCount(); m++)
+            {
+                var at = Raylib.GetMonitorPosition(m);
+                int mw = Raylib.GetMonitorWidth(m), mh = Raylib.GetMonitorHeight(m);
+                if (saved.WindowX + 50 >= at.X && saved.WindowY + 20 >= at.Y && saved.WindowX + 50 < at.X + mw && saved.WindowY + 20 < at.Y + mh)
+                    onScreen = true;
+            }
+            if (onScreen) Raylib.SetWindowPosition(saved.WindowX, saved.WindowY);
+        }
+        if (saved.WindowMaximized) Raylib.MaximizeWindow();
+    }
+
+    private void SaveSettings()
+    {
+        if (!KeepsSettings || !Raylib.IsWindowReady()) return;
+        var saved = new Settings
+        {
+            Hsv = new[] { hsv.X, hsv.Y, hsv.Z },
+            BrushSize = brushSize,
+            Hardness = hardness,
+            Opacity = opacity,
+            Flow = flow,
+            PressureToFlow = pressureToFlow,
+            PressureToSize = pressureToSize,
+            PressureCurve = pressureCurve,
+            TextureView = (int)textureView,
+            Lighting = view3d.Shade,
+            Grid = view3d.Grid,
+            Wireframe = view3d.Wireframe,
+            UvTexelGrid = uvView.PixelGrid,
+            UvShowSiblings = uvView.ShowSiblings,
+            Split = split,
+            NewTextureSize = newTextureSize,
+            WindowMaximized = Raylib.IsWindowMaximized(),
+        };
+        // Keep the un-maximized placement, so restoring from maximized goes back to it.
+        var previous = Settings.Load();
+        if (saved.WindowMaximized)
+        {
+            (saved.WindowX, saved.WindowY, saved.WindowWidth, saved.WindowHeight) =
+                (previous.WindowX, previous.WindowY, previous.WindowWidth, previous.WindowHeight);
+        }
+        else
+        {
+            var position = Raylib.GetWindowPosition();
+            (saved.WindowX, saved.WindowY) = ((int)position.X, (int)position.Y);
+            (saved.WindowWidth, saved.WindowHeight) = (Raylib.GetScreenWidth(), Raylib.GetScreenHeight());
+        }
+        saved.Save();
+    }
+
     public void Dispose()
     {
+        SaveSettings();
         Model?.Dispose();
         view3d.Dispose();
         uvView.Dispose();
