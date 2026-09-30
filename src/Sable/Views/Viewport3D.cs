@@ -28,6 +28,8 @@ public sealed class Viewport3D : IDisposable
     public int Height => height;
 
     private RenderTexture2D target;
+    // Made on first render: its shaders need the window (GL context), which doesn't exist when this view is built.
+    private OutlineRenderer? outline;
     private int width, height;
     private MouseButton navButton = MouseButton.Middle;
     private Vector2 origin, lastPointer;
@@ -105,12 +107,21 @@ public sealed class Viewport3D : IDisposable
     {
         if (width <= 0 || height <= 0) return;
         var model = state.Model;
+        float sceneRadius = model == null ? 10f : (model.Source.Max - model.Source.Min).Length() * 0.5f;
+        var projection = Camera.Projection(width / (float)height, sceneRadius);
+
+        // The active object's outline mask, drawn before the view itself (it needs its own render target).
+        bool outlined = model != null && state.ActiveObject >= 0 && state.ObjectVisible(state.ActiveObject);
+        outline ??= new OutlineRenderer();
+        if (outlined)
+            outline.RenderMask(width, height, Camera.ToRaylib(), projection, model!, state.PartVisible,
+                part => model!.Source.Parts[part].ObjectIndex == state.ActiveObject);
+
         Raylib.BeginTextureMode(target);
         Raylib.ClearBackground(new Color(57, 57, 57, 255));
 
-        float sceneRadius = model == null ? 10f : (model.Source.Max - model.Source.Min).Length() * 0.5f;
         Raylib.BeginMode3D(Camera.ToRaylib());
-        Rlgl.SetMatrixProjection(Camera.Projection(width / (float)height, sceneRadius));
+        Rlgl.SetMatrixProjection(projection);
 
         if (Grid) DrawGrid(sceneRadius);
 
@@ -135,6 +146,10 @@ public sealed class Viewport3D : IDisposable
         }
 
         Raylib.EndMode3D();
+
+        // Orange around the selected object; dimmer in Submesh mode, where the selected piece's edges lead.
+        if (outlined)
+            outline!.DrawOutline(state.Mode == SelectMode.Object ? new Color(255, 160, 40, 255) : new Color(200, 130, 50, 150));
 
         if (state.Cursor.Visible3D && state.Cursor.TexelOutline == null)
         {
@@ -218,6 +233,7 @@ public sealed class Viewport3D : IDisposable
 
     public void Dispose()
     {
+        outline?.Dispose();
         if (width > 0) Raylib.UnloadRenderTexture(target);
         width = height = 0;
     }

@@ -31,7 +31,7 @@ Open models by dropping them on the window, with File > Open (Ctrl+O), or on the
 | Numpad . or F | Frame the selection |
 | Home | Frame everything |
 | / (or numpad /) | Local view: only the active object, framed; again to go back |
-| Shift+Z | Wireframe overlay (off by default; the selected submesh stays outlined in Submesh mode) |
+| Shift+Z | Wireframe overlay (off by default). The selected object always gets an orange outline around its visible silhouette, and the selected submesh keeps its edges in Submesh mode |
 
 UV view: middle drag pans, the wheel zooms around the cursor, and Home fits the texture. The status bar shows the texel under the cursor.
 
@@ -88,7 +88,7 @@ Ctrl+R reloads the model from disk.
 
 - `Model/`: loading, as plain CPU data (`ModelLoader`, `BlendConverter`, `LoadedModel`), submeshes (`Topology`) and ray casts (`Raycast`).
 - `Paint/`: textures on the CPU (`PaintTexture`), strokes and undo (`Stroke`), and the pencil and brush (`Brush`).
-- `Rendering/`: the raylib side (`GpuModel`, `LitShader`).
+- `Rendering/`: the raylib side (`GpuModel`, `LitShader`, `OutlineRenderer` for the selection outline).
 - `Views/`: the 3D view with its camera, and the UV view.
 - `UI/`: the colour wheel.
 - `Input/`: pen pressure from Windows Ink (`PenInput`).

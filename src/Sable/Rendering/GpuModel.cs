@@ -99,6 +99,13 @@ public sealed unsafe class GpuModel : IDisposable
         Raylib.DrawMesh(mesh, materials[Source.Parts[index].MaterialIndex], Matrix4x4.Identity);
     }
 
+    /// <summary>Draws a part with another material (the outline's mask pass).</summary>
+    public void DrawPart(int index, Material material)
+    {
+        if (meshes[index] is not { } mesh) return;
+        Raylib.DrawMesh(mesh, material, Matrix4x4.Identity);
+    }
+
     /// <summary>The texture a part is painted on, or -1.</summary>
     public int TextureOf(int partIndex) =>
         partIndex < 0 ? -1 : Source.Materials[Source.Parts[partIndex].MaterialIndex].TextureIndex;
