@@ -65,6 +65,8 @@ Opacity and Flow work as in Photoshop and Krita. Flow is how much each dab adds,
 
 With a Wacom (or any Windows Ink pen), pressure drives flow, and optionally size, through the pressure curve: above 1 spends more of the pen's range on light pressure, for washes, and full pressure still reaches full. The pencil ignores pressure and is always opaque. The Wacom driver's "Use Windows Ink" setting has to be on; the panel shows a live pressure bar once the pen is seen.
 
+Over the views, each tool has its own cursor: a pencil (its body in the paint colour), a crosshair with a small brush for the brush (the view draws its size around it), the pipette and loupe for the eyedropper, and a lasso that turns into a move cross over the selection. Select keeps the normal arrow.
+
 On the model the brush paints every texel whose point on the surface falls inside the brush, so strokes carry across UV seams; it only paints faces turned the same way as the one under the cursor. Objects with UVs but no texture get a **New texture** button in the panel, filled with the material colour.
 
 Saving writes each changed texture back to its file. For a `.blend`, that is the image file the .blend itself uses (found by asking Blender), so Unity reimports it. Textures without a file (embedded or new) go next to the model as `<model>_<texture>.png`, and need hooking up to the material in Blender.

@@ -63,8 +63,9 @@ internal sealed class App : IDisposable
     private Sample sample;
     private Sample altSample;
     private bool altWasDown;
-    private bool eyedropperCursor;
-    private Vector2 eyedropperTip;
+    private CursorIcon cursorIcon;
+    private bool selfTestIcons;
+    private Vector2 cursorTip;
 
     // Select-tool click detection in the 3D view.
     private bool selectPressed;
@@ -178,7 +179,7 @@ internal sealed class App : IDisposable
             DrawPanel(h);
             DrawStatusBar(w, h);
             DrawColorPicker();
-            DrawEyedropper();
+            DrawToolCursor();
             rlImGui.End();
             UpdateSystemCursor();
 
@@ -556,8 +557,8 @@ internal sealed class App : IDisposable
     {
         state.Cursor = default;
         sample = default;
-        eyedropperCursor = false;
-        eyedropperTip = Raylib.GetMousePosition();
+        cursorIcon = CursorIcon.System;
+        cursorTip = Raylib.GetMousePosition();
         bool alt = Raylib.IsKeyDown(KeyboardKey.LeftAlt) || Raylib.IsKeyDown(KeyboardKey.RightAlt);
         try
         {
@@ -570,6 +571,25 @@ internal sealed class App : IDisposable
             if (!alt && altWasDown && altSample.Valid) SetColor(altSample.Color);
             if (!alt) altSample = default;
             altWasDown = alt;
+        }
+        if (cursorIcon == CursorIcon.System) cursorIcon = ToolIcon(free);
+    }
+
+    /// <summary>The cursor for the current tool while it is over a view (or dragging); the system arrow elsewhere.</summary>
+    private CursorIcon ToolIcon(bool free)
+    {
+        bool overView = free && ((view3d.Hovered && !view3d.Navigating) || uvView.Hovered);
+        if (!overView && stroke == null && lassoDrag == LassoDrag.None) return CursorIcon.System;
+        switch (tool)
+        {
+            case Tool.Pencil: return CursorIcon.Pencil;
+            case Tool.Brush: return CursorIcon.Brush;
+            case Tool.Lasso:
+                bool shift = Raylib.IsKeyDown(KeyboardKey.LeftShift) || Raylib.IsKeyDown(KeyboardKey.RightShift);
+                bool overSelection = uvView.Hovered && !shift && state.ActiveSelection is { } selection
+                    && selection.Contains((int)MathF.Floor(uvView.MouseTexel.X), (int)MathF.Floor(uvView.MouseTexel.Y));
+                return lassoDrag == LassoDrag.Moving || (lassoDrag == LassoDrag.None && overSelection) ? CursorIcon.Move : CursorIcon.Lasso;
+            default: return CursorIcon.System;
         }
     }
 
@@ -605,7 +625,7 @@ internal sealed class App : IDisposable
 
             if (sampling)
             {
-                eyedropperCursor = true;
+                cursorIcon = CursorIcon.Eyedropper;
                 if (hasHit) sample = SampleAt(hit);
             }
             if (painting && !sampling && hasHit) Show3DCursor(hit);
@@ -638,7 +658,7 @@ internal sealed class App : IDisposable
             bool canPaint = state.ActiveObject >= 0;
             if (sampling)
             {
-                eyedropperCursor = true;
+                cursorIcon = CursorIcon.Eyedropper;
                 if (uvView.MouseOnTexture)
                 {
                     var tex = Model.Textures[state.ActiveTexture];
@@ -656,7 +676,7 @@ internal sealed class App : IDisposable
             }
         }
         if (stroke != null && !strokeIn3D && tool is Tool.Pencil or Tool.Brush) ShowUvCursor();
-        if (sampling && uvView.Hovered && free && state.ActiveTexture < 0) eyedropperCursor = true;
+        if (sampling && uvView.Hovered && free && state.ActiveTexture < 0) cursorIcon = CursorIcon.Eyedropper;
     }
 
     // ---------- lasso ----------
@@ -963,12 +983,118 @@ internal sealed class App : IDisposable
 
     private void SetColor(Color c) => hsv = ColorWheel.RgbToHsv(new Vector3(c.R, c.G, c.B) / 255f, hsv.X);
 
-    /// <summary>Shows the system cursor, or hides it while the eyedropper draws its own.</summary>
+    private enum CursorIcon { System, Eyedropper, Pencil, Brush, Lasso, Move }
+
+    /// <summary>Shows the system cursor, or hides it while a tool draws its own.</summary>
     private void UpdateSystemCursor()
     {
-        if (eyedropperCursor == Raylib.IsCursorHidden()) return;
-        if (eyedropperCursor) Raylib.HideCursor();
+        bool custom = cursorIcon != CursorIcon.System;
+        if (custom == Raylib.IsCursorHidden()) return;
+        if (custom) Raylib.HideCursor();
         else Raylib.ShowCursor();
+    }
+
+    private static uint U32(Vector4 c) => ImGui.ColorConvertFloat4ToU32(c);
+    private static uint U32(Color c) => ImGui.ColorConvertFloat4ToU32(new Vector4(c.R, c.G, c.B, 255f) / 255f);
+    private static readonly uint Black = U32(new Vector4(0, 0, 0, 1));
+    private static readonly uint White = U32(Vector4.One);
+
+    /// <summary>Draws the current tool's cursor with its hot spot at <see cref="cursorTip"/>.</summary>
+    private void DrawToolCursor()
+    {
+        var draw = ImGui.GetForegroundDrawList();
+        switch (cursorIcon)
+        {
+            case CursorIcon.Eyedropper: DrawEyedropper(); break;
+            case CursorIcon.Pencil: DrawPencilIcon(draw, cursorTip); break;
+            case CursorIcon.Brush: DrawBrushIcon(draw, cursorTip); break;
+            case CursorIcon.Lasso: DrawLassoIcon(draw, cursorTip); break;
+            case CursorIcon.Move: DrawMoveIcon(draw, cursorTip); break;
+        }
+        if (selfTestIcons)
+        {
+            var at = new Vector2(Raylib.GetScreenWidth() - 330, menuHeight + 70);
+            DrawPencilIcon(draw, at);
+            DrawBrushIcon(draw, at + new Vector2(70, 0));
+            DrawLassoIcon(draw, at + new Vector2(140, 0));
+            DrawMoveIcon(draw, at + new Vector2(230, 0));
+        }
+    }
+
+    // Icon shapes lean up and to the right of the hot spot, like a hand holding the tool.
+    private static readonly Vector2 Along = Vector2.Normalize(new Vector2(1, -1));
+    private static readonly Vector2 Across = new(-Along.Y, Along.X);
+
+    private static void Outlined(ImDrawListPtr draw, Vector2[] points, uint fill)
+    {
+        draw.AddConvexPolyFilled(ref points[0], points.Length, fill);
+        draw.AddPolyline(ref points[0], points.Length, Black, ImDrawFlags.Closed, 1.5f);
+    }
+
+    /// <summary>A pencil with the graphite tip on the hot spot and its body in the paint colour.</summary>
+    private void DrawPencilIcon(ImDrawListPtr draw, Vector2 tip)
+    {
+        const float w = 4f;
+        Vector2 cone = tip + Along * 9f, body = tip + Along * 27f, end = tip + Along * 32f;
+        Outlined(draw, new[] { tip, cone + Across * w, cone - Across * w }, U32(new Vector4(0.93f, 0.85f, 0.7f, 1)));
+        Outlined(draw, new[] { tip, tip + Along * 3.5f + Across * 1.6f, tip + Along * 3.5f - Across * 1.6f }, Black);
+        Outlined(draw, new[] { cone + Across * w, body + Across * w, body - Across * w, cone - Across * w }, U32(PaintColor));
+        Outlined(draw, new[] { body + Across * w, end + Across * w, end - Across * w, body - Across * w }, U32(new Vector4(0.95f, 0.6f, 0.65f, 1)));
+    }
+
+    /// <summary>A crosshair on the hot spot (the view draws the brush's size around it) and a small brush beside it.</summary>
+    private void DrawBrushIcon(ImDrawListPtr draw, Vector2 center)
+    {
+        foreach (var (a, b) in new[] { (new Vector2(-7, 0), new Vector2(-2, 0)), (new Vector2(2, 0), new Vector2(7, 0)),
+                                       (new Vector2(0, -7), new Vector2(0, -2)), (new Vector2(0, 2), new Vector2(0, 7)) })
+        {
+            draw.AddLine(center + a, center + b, Black, 3f);
+            draw.AddLine(center + a, center + b, White, 1f);
+        }
+
+        const float w = 3.5f;
+        Vector2 tip = center + new Vector2(11, -11);
+        Vector2 bristleEnd = tip + Along * 9f, ferruleEnd = bristleEnd + Along * 4f, handleEnd = ferruleEnd + Along * 13f;
+        Outlined(draw, new[] { tip, bristleEnd + Across * w, bristleEnd - Across * w }, U32(PaintColor));
+        Outlined(draw, new[] { bristleEnd + Across * w, ferruleEnd + Across * w, ferruleEnd - Across * w, bristleEnd - Across * w }, U32(new Vector4(0.75f, 0.75f, 0.78f, 1)));
+        Outlined(draw, new[] { ferruleEnd + Across * 2.2f, handleEnd + Across * 1.6f, handleEnd - Across * 1.6f, ferruleEnd - Across * 2.2f }, U32(new Vector4(0.55f, 0.35f, 0.2f, 1)));
+    }
+
+    /// <summary>A lasso: a loop up and to the right, its rope ending on the hot spot.</summary>
+    private static void DrawLassoIcon(ImDrawListPtr draw, Vector2 tip)
+    {
+        Vector2 center = tip + new Vector2(16, -18);
+        var loop = new Vector2[28];
+        for (int i = 0; i < loop.Length; i++)
+        {
+            float a = i / (float)loop.Length * MathF.PI * 2f;
+            loop[i] = center + new Vector2(MathF.Cos(a) * 11f, MathF.Sin(a) * 7f);
+        }
+        Vector2 knot = center + new Vector2(-7.5f, 5f);
+        foreach (var (color, width) in new[] { (Black, 4f), (White, 2f) })
+        {
+            draw.AddPolyline(ref loop[0], loop.Length, color, ImDrawFlags.Closed, width);
+            draw.AddBezierCubic(knot, knot + new Vector2(-2, 6), tip + new Vector2(6, -4), tip, color, width);
+        }
+        draw.AddCircleFilled(knot, 2.5f, Black);
+    }
+
+    /// <summary>Four arrows: dragging here moves the selected texels.</summary>
+    private static void DrawMoveIcon(ImDrawListPtr draw, Vector2 center)
+    {
+        const float reach = 12f, head = 4f;
+        foreach (var (color, width) in new[] { (Black, 4f), (White, 1.6f) })
+        {
+            draw.AddLine(center - new Vector2(reach, 0), center + new Vector2(reach, 0), color, width);
+            draw.AddLine(center - new Vector2(0, reach), center + new Vector2(0, reach), color, width);
+            foreach (var d in new[] { new Vector2(1, 0), new Vector2(-1, 0), new Vector2(0, 1), new Vector2(0, -1) })
+            {
+                var side = new Vector2(-d.Y, d.X);
+                Vector2 point = center + d * reach, back = center + d * (reach - head);
+                var chevron = new[] { back + side * head, point, back - side * head };
+                draw.AddPolyline(ref chevron[0], chevron.Length, color, ImDrawFlags.None, width);
+            }
+        }
     }
 
     /// <summary>
@@ -977,12 +1103,9 @@ internal sealed class App : IDisposable
     /// </summary>
     private void DrawEyedropper()
     {
-        if (!eyedropperCursor) return;
         var draw = ImGui.GetForegroundDrawList();
-        Vector2 tip = eyedropperTip;
-        uint black = ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 1));
-        uint white = ImGui.ColorConvertFloat4ToU32(Vector4.One);
-        uint U32(Color c) => ImGui.ColorConvertFloat4ToU32(new Vector4(c.R, c.G, c.B, 255f) / 255f);
+        Vector2 tip = cursorTip;
+        uint black = Black, white = White;
 
         // Pipette, pointing down-left at the hot spot.
         Vector2 dir = Vector2.Normalize(new Vector2(1, -1));
@@ -1428,8 +1551,9 @@ internal sealed class App : IDisposable
                 var local = new Vector2(view3d.Width, view3d.Height) * 0.5f;
                 var ray = Raylib.GetScreenToWorldRayEx(local, view3d.Camera.ToRaylib(), view3d.Width, view3d.Height);
                 if (Raycast.Cast(source, ray.Position, ray.Direction, state.ObjectVisible, out var hit)) sample = SampleAt(hit);
-                eyedropperCursor = true;
-                eyedropperTip = new Vector2(PanelWidth, menuHeight) + local;
+                cursorIcon = CursorIcon.Eyedropper;
+                cursorTip = new Vector2(PanelWidth, menuHeight) + local;
+                selfTestIcons = true;
                 break;
             }
         }
