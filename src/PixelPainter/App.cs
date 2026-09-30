@@ -52,6 +52,8 @@ internal sealed class App : IDisposable
 
     // Eyedropper (the I tool, or holding Alt).
     private Sample sample;
+    private Sample altSample;
+    private bool altWasDown;
     private bool eyedropperCursor;
     private Vector2 eyedropperTip;
 
@@ -366,6 +368,7 @@ internal sealed class App : IDisposable
             if (Raylib.IsKeyPressed(KeyboardKey.S)) SaveAll();
             if (Pressed(KeyboardKey.Z)) { EndStroke(); if (shift) undo.Redo(); else undo.Undo(); }
             if (Pressed(KeyboardKey.Y)) { EndStroke(); undo.Redo(); }
+            if (Raylib.IsKeyPressed(KeyboardKey.D)) state.Selection = null;
             return;
         }
 
@@ -373,6 +376,7 @@ internal sealed class App : IDisposable
         if (Raylib.IsKeyPressed(KeyboardKey.Escape))
         {
             if (pickerOpen) closePicker = true;
+            else if (state.Selection != null) state.Selection = null;
             else if (state.Mode == SelectMode.Submesh && state.Submesh != null) state.Submesh = null;
             else state.ClearSelection();
         }
@@ -383,8 +387,9 @@ internal sealed class App : IDisposable
         if (Raylib.IsKeyPressed(KeyboardKey.N)) tool = Tool.Pencil;
         if (Raylib.IsKeyPressed(KeyboardKey.B)) tool = Tool.Brush;
         if (Raylib.IsKeyPressed(KeyboardKey.I)) tool = Tool.Eyedropper;
-        if (Pressed(KeyboardKey.Q)) brushSize = brushSize < 4 ? brushSize + 1 : MathF.Min(MathF.Round(brushSize * 1.25f), 256);
-        if (Pressed(KeyboardKey.W)) brushSize = brushSize <= 4 ? MathF.Max(brushSize - 1, 1) : MathF.Round(brushSize / 1.25f);
+        if (Raylib.IsKeyPressed(KeyboardKey.X)) tool = Tool.Lasso;
+        if (Pressed(KeyboardKey.W)) brushSize = brushSize < 4 ? brushSize + 1 : MathF.Min(MathF.Round(brushSize * 1.25f), 256);
+        if (Pressed(KeyboardKey.Q)) brushSize = brushSize <= 4 ? MathF.Max(brushSize - 1, 1) : MathF.Round(brushSize / 1.25f);
         if (Raylib.IsKeyPressed(KeyboardKey.Z)) view3d.Wireframe = !view3d.Wireframe;
         if (Raylib.IsKeyPressed(KeyboardKey.H)) { if (alt) Reveal(); else if (shift) HideUnselected(); else HideSelected(); }
         if (Raylib.IsKeyPressed(KeyboardKey.Slash) || Raylib.IsKeyPressed(KeyboardKey.KpDivide)) ToggleLocalView();
@@ -516,13 +521,31 @@ internal sealed class App : IDisposable
         sample = default;
         eyedropperCursor = false;
         eyedropperTip = Raylib.GetMousePosition();
+        bool alt = Raylib.IsKeyDown(KeyboardKey.LeftAlt) || Raylib.IsKeyDown(KeyboardKey.RightAlt);
+        try
+        {
+            UpdateTools(free, alt);
+        }
+        finally
+        {
+            // Holding Alt samples without clicking: letting go takes the last texel it was over.
+            if (alt && sample.Valid) altSample = sample;
+            if (!alt && altWasDown && altSample.Valid) SetColor(altSample.Color);
+            if (!alt) altSample = default;
+            altWasDown = alt;
+        }
+    }
+
+    private void UpdateTools(bool free, bool alt)
+    {
         if (Model == null) return;
         var source = Model.Source;
-        bool alt = Raylib.IsKeyDown(KeyboardKey.LeftAlt) || Raylib.IsKeyDown(KeyboardKey.RightAlt);
         bool painting = tool is Tool.Pencil or Tool.Brush;
         // Holding Alt turns any tool into the eyedropper until it's released.
-        bool sampling = (tool == Tool.Eyedropper || alt) && stroke == null;
+        bool sampling = (tool == Tool.Eyedropper || alt) && stroke == null && lassoDrag == LassoDrag.None;
         bool pressed = Raylib.IsMouseButtonPressed(MouseButton.Left);
+
+        UpdateLasso(free, pressed && !sampling);
 
         if (stroke != null)
         {
@@ -558,6 +581,7 @@ internal sealed class App : IDisposable
                     else if (hasHit) Begin3D(hit);
                 }
                 else if (tool == Tool.Select) { selectPressed = true; selectPressPosition = view3d.LocalMouse; }
+                else if (tool == Tool.Lasso) SetStatus("The lasso works in the UV view.", error: false);
             }
         }
 
@@ -597,6 +621,94 @@ internal sealed class App : IDisposable
         if (stroke != null && !strokeIn3D && tool is Tool.Pencil or Tool.Brush) ShowUvCursor();
         if (sampling && uvView.Hovered && free && state.ActiveTexture < 0) eyedropperCursor = true;
     }
+
+    // ---------- lasso ----------
+
+    private enum LassoDrag { None, Drawing, Moving }
+    private LassoDrag lassoDrag;
+    private SelectionOp lassoOp;
+    private SelectionMove? selectionMove;
+    private Vector2 moveStart;
+
+    /// <summary>
+    /// The lasso, in the UV view: drag to draw a selection (Shift adds, Ctrl subtracts); drag inside it to move the
+    /// selected texels (Ctrl+drag moves a copy); a click outside it deselects.
+    /// </summary>
+    private void UpdateLasso(bool free, bool pressed)
+    {
+        var mouse = uvView.MouseTexel;
+        if (lassoDrag == LassoDrag.Drawing && state.Lasso != null)
+        {
+            if (Raylib.IsMouseButtonDown(MouseButton.Left))
+            {
+                if (Vector2.Distance(state.Lasso[^1], mouse) >= 0.35f) state.Lasso.Add(mouse);
+            }
+            else
+            {
+                FinishLasso();
+            }
+            return;
+        }
+        if (lassoDrag == LassoDrag.Moving && selectionMove != null && state.Selection != null)
+        {
+            if (Raylib.IsMouseButtonDown(MouseButton.Left))
+            {
+                selectionMove.MoveTo((int)MathF.Round(mouse.X - moveStart.X), (int)MathF.Round(mouse.Y - moveStart.Y), state.Selection);
+            }
+            else
+            {
+                if (selectionMove.Finish() is { } step) undo.Push(step);
+                selectionMove = null;
+                lassoDrag = LassoDrag.None;
+            }
+            return;
+        }
+
+        if (tool != Tool.Lasso || !pressed || !free || !uvView.Hovered || state.ActiveTexture < 0 || Model == null) return;
+        bool shift = Raylib.IsKeyDown(KeyboardKey.LeftShift) || Raylib.IsKeyDown(KeyboardKey.RightShift);
+        bool ctrl = Raylib.IsKeyDown(KeyboardKey.LeftControl) || Raylib.IsKeyDown(KeyboardKey.RightControl);
+        var selection = state.ActiveSelection;
+        if (selection != null && !shift && selection.Contains((int)MathF.Floor(mouse.X), (int)MathF.Floor(mouse.Y)))
+        {
+            selectionMove = new SelectionMove(Model.Textures[state.ActiveTexture], selection, duplicate: ctrl);
+            selectionMove.MoveTo(0, 0, selection);
+            moveStart = mouse;
+            lassoDrag = LassoDrag.Moving;
+            return;
+        }
+        lassoOp = shift ? SelectionOp.Add : ctrl ? SelectionOp.Subtract : SelectionOp.Replace;
+        state.Lasso = new List<Vector2> { mouse };
+        lassoDrag = LassoDrag.Drawing;
+    }
+
+    private void FinishLasso()
+    {
+        var polygon = state.Lasso!;
+        state.Lasso = null;
+        lassoDrag = LassoDrag.None;
+
+        float extent = 0;
+        foreach (var p in polygon) extent = MathF.Max(extent, Vector2.Distance(p, polygon[0]));
+        if (polygon.Count < 3 || extent < 0.75f)
+        {
+            // A click rather than a drag: deselect.
+            if (lassoOp == SelectionOp.Replace) state.Selection = null;
+            return;
+        }
+
+        var tex = Model!.Textures[state.ActiveTexture];
+        if (lassoOp == SelectionOp.Replace || state.ActiveSelection == null)
+        {
+            if (lassoOp == SelectionOp.Subtract) return;
+            state.Selection = new TexelSelection(state.ActiveTexture, tex.Width, tex.Height);
+        }
+        state.Selection!.Apply(polygon, lassoOp);
+        if (!state.Selection.Any) state.Selection = null;
+    }
+
+    /// <summary>The selection mask for strokes on <paramref name="texture"/>: paint stays inside it.</summary>
+    private bool[]? MaskFor(int texture) =>
+        state.Selection is { Any: true } s && s.Texture == texture ? s.Mask : null;
 
     private void Show3DCursor(SurfaceHit hit)
     {
@@ -672,7 +784,7 @@ internal sealed class App : IDisposable
         state.ActiveTexture = texture;
         strokeTexture = texture;
         strokeIn3D = true;
-        stroke = new Stroke(Model.Textures[texture], PaintColor);
+        stroke = new Stroke(Model.Textures[texture], PaintColor, MaskFor(texture));
         Dab3D(hit);
         lastMouse = view3d.LocalMouse;
     }
@@ -714,7 +826,7 @@ internal sealed class App : IDisposable
     {
         strokeTexture = state.ActiveTexture;
         strokeIn3D = false;
-        stroke = new Stroke(Model!.Textures[strokeTexture], PaintColor);
+        stroke = new Stroke(Model!.Textures[strokeTexture], PaintColor, MaskFor(strokeTexture));
         if (tool == Tool.Pencil)
         {
             lastTexel = ((int)MathF.Floor(uvView.MouseTexel.X), (int)MathF.Floor(uvView.MouseTexel.Y));
@@ -994,6 +1106,12 @@ internal sealed class App : IDisposable
         ToolButton("Brush", Tool.Brush, "B");
         ImGui.SameLine();
         ToolButton("Eyedropper", Tool.Eyedropper, "I");
+        ToolButton("Lasso (UV)", Tool.Lasso, "X");
+        if (state.ActiveSelection != null)
+        {
+            ImGui.SameLine();
+            if (ImGui.Button("Deselect (Ctrl+D)", new Vector2(half, 0))) state.Selection = null;
+        }
 
         var rgb = ColorWheel.HsvToRgb(hsv);
         if (ImGui.ColorButton("##color", new Vector4(rgb, 1f), ImGuiColorEditFlags.NoTooltip, new Vector2(40, 22)))
@@ -1058,7 +1176,7 @@ internal sealed class App : IDisposable
             ImGui.PopID();
         }
         ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);
-        ImGui.TextWrapped("H hide, Shift+H hide others, Alt+H reveal, / local view. Hold Alt and click to sample a colour.");
+        ImGui.TextWrapped("H hide, Shift+H hide others, Alt+H reveal, / local view. Hold Alt over a colour and let go to pick it.");
         ImGui.PopStyleColor();
     }
 
@@ -1170,6 +1288,24 @@ internal sealed class App : IDisposable
                     Brush.Line(stroke, 2, 2, 30, 14, clip: true);
                     EndStroke();
                     Console.WriteLine("[selftest] UV line painted");
+
+                    // Lasso a triangle, move it right (leaving a hole), then a masked dab that must stay inside it.
+                    var tex = Model.Textures[state.ActiveTexture];
+                    var selection = new TexelSelection(state.ActiveTexture, tex.Width, tex.Height);
+                    selection.Apply(new[] { new Vector2(6, 30), new Vector2(26, 30), new Vector2(10, 50) }, SelectionOp.Replace);
+                    state.Selection = selection;
+                    int selected = selection.Mask.Count(m => m);
+                    var move = new SelectionMove(tex, selection, duplicate: false);
+                    move.MoveTo(0, 0, selection);
+                    move.MoveTo(12, 0, selection);
+                    if (move.Finish() is { } moveStep) undo.Push(moveStep);
+                    stroke = new Stroke(tex, new Color(255, 255, 0, 255), MaskFor(state.ActiveTexture));
+                    Brush.DabTexels(stroke, new Vector2(24, 38), 30, 1f);
+                    EndStroke();
+                    int yellowOutside = 0;
+                    for (int i = 0; i < tex.Pixels.Length; i++)
+                        if (!selection.Mask[i] && tex.Pixels[i] is { R: 255, G: 255, B: 0 }) yellowOutside++;
+                    Console.WriteLine($"[selftest] lasso selected {selected} texels, moved to {selection.Mask.Count(m => m)}; masked dab texels outside selection: {yellowOutside}");
                 }
                 tool = Tool.Brush;
                 Console.WriteLine($"[selftest] undo available: {undo.CanUndo}; dirty textures: {Model.Textures.Count(t => t.Dirty)}");

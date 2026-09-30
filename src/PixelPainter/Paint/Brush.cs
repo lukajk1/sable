@@ -3,7 +3,7 @@ using PixelPainter.Model;
 
 namespace PixelPainter.Paint;
 
-public enum Tool { Select, Pencil, Brush, Eyedropper }
+public enum Tool { Select, Pencil, Brush, Eyedropper, Lasso }
 
 /// <summary>
 /// How the paint tools mark texels. The pencil sets exactly one texel. The brush is round, sized in texels, with a

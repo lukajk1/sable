@@ -102,6 +102,7 @@ public sealed class UvView : IDisposable
         Raylib.DrawRectangleLinesEx(area, 1, new Color(110, 110, 110, 255));
 
         if (model != null) DrawLayout(state, model);
+        DrawSelection(state);
         DrawCursor(state);
 
         Raylib.EndTextureMode();
@@ -148,6 +149,27 @@ public sealed class UvView : IDisposable
             if (source.ComponentHidden[component]) continue;
             if (onlyComponent >= 0 && component != onlyComponent) continue;
             Raylib.DrawLineV(offset + uvs[edges.A[e]] * scale, offset + uvs[edges.B[e]] * scale, color);
+        }
+    }
+
+    /// <summary>Marching ants around the lasso selection, and the lasso while it's being drawn.</summary>
+    private void DrawSelection(EditorState state)
+    {
+        if (state.ActiveSelection is { } selection)
+        {
+            int phase = (int)(Raylib.GetTime() * 6);
+            foreach (var (a, b) in selection.Outline)
+            {
+                // Each outline segment is one texel long; alternate them and shift the pattern over time.
+                bool dark = (((int)(a.X + a.Y) + phase) & 1) == 0;
+                Raylib.DrawLineEx(offset + a * zoom, offset + b * zoom, 1.5f, dark ? Color.Black : Color.White);
+            }
+        }
+        if (state.Lasso is { Count: > 1 } lasso)
+        {
+            for (int i = 1; i < lasso.Count; i++)
+                Raylib.DrawLineEx(offset + lasso[i - 1] * zoom, offset + lasso[i] * zoom, 1.5f, Color.White);
+            Raylib.DrawLineV(offset + lasso[^1] * zoom, offset + lasso[0] * zoom, new Color(255, 255, 255, 110));
         }
     }
 

@@ -12,12 +12,15 @@ public sealed class Stroke
     private readonly Color[] before;
     private readonly float[] coverage;
     private readonly Color color;
+    private readonly bool[]? mask;
     private int minX = int.MaxValue, minY = int.MaxValue, maxX = -1, maxY = -1;
 
-    public Stroke(PaintTexture texture, Color color)
+    /// <param name="mask">When given, only these texels can be painted (the lasso selection).</param>
+    public Stroke(PaintTexture texture, Color color, bool[]? mask = null)
     {
         Texture = texture;
         this.color = color;
+        this.mask = mask;
         before = (Color[])texture.Pixels.Clone();
         coverage = new float[texture.Width * texture.Height];
     }
@@ -29,6 +32,7 @@ public sealed class Stroke
         x = Texture.Wrap(x, Texture.Width);
         y = Texture.Wrap(y, Texture.Height);
         int i = y * Texture.Width + x;
+        if (mask != null && !mask[i]) return;
         if (alpha <= coverage[i]) return;
         coverage[i] = alpha;
 

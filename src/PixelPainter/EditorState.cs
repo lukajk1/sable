@@ -19,6 +19,14 @@ public sealed class EditorState
     /// <summary>The texture the UV view shows and paints, or -1.</summary>
     public int ActiveTexture = -1;
     public BrushCursor Cursor;
+    /// <summary>The lasso selection (on one texture), or null.</summary>
+    public Paint.TexelSelection? Selection;
+    /// <summary>The lasso being drawn, in texels, or null.</summary>
+    public List<Vector2>? Lasso;
+
+    /// <summary>The selection, if it is on the texture the UV view shows and has any texels.</summary>
+    public Paint.TexelSelection? ActiveSelection =>
+        Selection is { Any: true } s && s.Texture == ActiveTexture ? s : null;
 
     public bool ObjectVisible(int index) =>
         Model != null && !Model.Source.Objects[index].Hidden && (Isolated == null || Isolated == index);
