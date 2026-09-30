@@ -50,6 +50,8 @@ public sealed class MeshPart
     public required int[] TriangleComponent { get; init; }
     public required int ComponentCount { get; init; }
     public required bool[] ComponentHidden { get; init; }
+    /// <summary>Spatial index over the triangles, for ray casts and brush dabs.</summary>
+    public required TriangleBvh Bvh { get; init; }
 
     public int TriangleCount => Indices.Length / 3;
     public bool HasUvs => Uvs != null;

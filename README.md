@@ -90,6 +90,7 @@ Over the views each tool shows its own cursor:
 - **Hardness:** a solid core out to that share of the radius, then a thin feathered edge.
 - **Opacity and Flow** work as in Photoshop and Krita. Flow is how much each dab adds, so with low flow, going over a spot again within a stroke deepens it. Opacity is the most one stroke can reach. Both sliders are on a log scale, with most of their travel in the low range.
 - **On the model:** the brush paints every texel whose point on the surface falls inside it, so strokes carry across UV seams. It only paints faces turned the same way as the one under the cursor.
+- **Halo:** a press that just misses the active object, within the brush's screen radius (at least 16 px), doesn't orbit. The stroke starts and paints once the brush reaches the surface. A fill click there does nothing.
 
 ### Pen pressure
 
@@ -153,18 +154,20 @@ Sable [model] [--select name] [--texview 0|1|2] [--screenshot out.png] [--selfte
 | `--screenshot out.png` | Render a few frames, save the window as a PNG and exit (settings are left alone) |
 | `--selftest` | Before the screenshot, run checks: test strokes, fill, box and lasso selection, flow build-up, hide undo, UV export and re-import. They print to the console, and nothing is saved |
 | `--frames N` | Quit after N frames, saving settings as a normal close does |
+| `--bench` | On the textured object with the most triangles, time hover ray casts, 3D strokes (pencil and brushes of 8, 32 and 96 texels), a UV stroke, stroke setup and texture upload; print them and quit |
 
 Environment: `SABLE_BLENDER` (the Blender to use), `SABLE_SETTINGS` (a different settings file, for tests).
 
 ## Code layout
 
-- `Model/`: loading, as plain CPU data (`ModelLoader`, `BlendConverter`, `LoadedModel`), submeshes (`Topology`) and ray casts (`Raycast`).
+- `Model/`: loading, as plain CPU data (`ModelLoader`, `BlendConverter`, `LoadedModel`), submeshes (`Topology`), ray casts (`Raycast`) and a triangle BVH per part (`TriangleBvh`) that ray casts and brush dabs search.
 - `Paint/`: textures on the CPU (`PaintTexture`), strokes and the undo stack (`Stroke`), the pencil, brush and fill (`Brush`), and texel selections (`TexelSelection`, `SelectionMove`).
 - `Rendering/`: the raylib side: `GpuModel`, `LitShader`, `OutlineRenderer` (selection outline), `UvLayoutExport`, and `VisibilityStep` (undoable hiding).
 - `Views/`: the 3D view with its camera (`Viewport3D`, `OrbitCamera`) and the UV view (`UvView`).
 - `UI/`: the colour wheel.
 - `Input/`: pen input from Windows Ink (`PenInput`).
-- `Diagnostics/`: the frame profiler behind the hitch log.
+- `Diagnostics/`: the frame profiler behind the hitch log, and the `--bench` table.
+- `assets/icon/`: the app icon (`sable.svg`, PNG sizes, `sable.ico`).
 - `App.cs`: the window, tools, selection and panels. `EditorState.cs`: what's selected and shown. `Settings.cs`: what persists. `FileDialogs.cs`: the out-of-process dialogs. `Program.cs`: the command line.
 
 Built with .NET 9, [Raylib-cs](https://github.com/ChrisDill/Raylib-cs), [ImGui.NET](https://github.com/ImGuiNET/ImGui.NET) via [rlImGui-cs](https://github.com/raylib-extras/rlImGui-cs), and [AssimpNet](https://bitbucket.org/Starnick/assimpnet).

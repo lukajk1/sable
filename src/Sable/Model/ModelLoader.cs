@@ -131,6 +131,7 @@ public static class ModelLoader
             TriangleComponent = components,
             ComponentCount = componentCount,
             ComponentHidden = new bool[componentCount],
+            Bvh = new TriangleBvh(positions, indexArray),
         };
     }
 

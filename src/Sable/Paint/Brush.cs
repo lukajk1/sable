@@ -41,8 +41,14 @@ public static class Brush
             : new Vector2(MathF.Round(texel.X), MathF.Round(texel.Y));
     }
 
-    /// <summary>Sample points per texel side: finer for small brushes, where a texel is a big share of the dab.</summary>
-    private static int Samples(float size) => size <= 16 ? 4 : 2;
+    /// <summary>
+    /// Sample points per texel side: fine for small brushes, where one texel is a big share of the dab, and a single
+    /// point for big ones, where the edge spans many texels anyway.
+    /// </summary>
+    private static int Samples(float size) => size <= 16 ? 4 : size <= 48 ? 2 : 1;
+
+    // Triangles near the current dab; main thread only.
+    private static readonly List<int> nearby = new();
 
     /// <summary>A round dab in texture space (the UV view).</summary>
     public static void DabTexels(Stroke stroke, Vector2 center, float size, float hardness)
@@ -174,61 +180,132 @@ public static class Brush
         float radius = MathF.Max(size * 0.5f, 0.5f) * texelWorld;
         int n = Samples(size);
         Vector3 center = hit.Point;
+
+        // The triangles near the brush, on this object's parts that use this texture.
+        candidates.Clear();
         foreach (int p in model.Objects[objectIndex].Parts)
         {
             var part = model.Parts[p];
             if (part.Uvs == null || textureOfPart(p) != textureIndex) continue;
-            var positions = part.Positions;
-            var uvs = part.Uvs;
-            var idx = part.Indices;
-            for (int t = 0; t < part.TriangleCount; t++)
-            {
-                if (!part.TriangleVisible(t)) continue;
-                Vector3 a = positions[idx[t * 3]], b = positions[idx[t * 3 + 1]], c = positions[idx[t * 3 + 2]];
-                Vector3 lo = Vector3.Min(Vector3.Min(a, b), c) - new Vector3(radius);
-                Vector3 hi = Vector3.Max(Vector3.Max(a, b), c) + new Vector3(radius);
-                if (center.X < lo.X || center.Y < lo.Y || center.Z < lo.Z || center.X > hi.X || center.Y > hi.Y || center.Z > hi.Z) continue;
+            nearby.Clear();
+            part.Bvh.QuerySphere(center, radius, nearby);
+            foreach (int t in nearby)
+                if (part.TriangleVisible(t)) candidates.Add((part, t));
+        }
 
-                Vector3 normal = Vector3.Cross(b - a, c - a);
-                float len = normal.Length();
-                if (len < 1e-12f) continue;
-                normal /= len;
-                if (Vector3.Dot(normal, hit.Normal) < 0.2f) continue;
-
-                Vector2 ua = uvs[idx[t * 3]] * textureSize, ub = uvs[idx[t * 3 + 1]] * textureSize, uc = uvs[idx[t * 3 + 2]] * textureSize;
-                if (!TexelWindow(a, b, c, normal, ua, ub, uc, center, radius, out Vector2 wMin, out Vector2 wMax)) continue;
-
-                int x0 = (int)MathF.Floor(wMin.X), x1 = (int)MathF.Ceiling(wMax.X);
-                int y0 = (int)MathF.Floor(wMin.Y), y1 = (int)MathF.Ceiling(wMax.Y);
-                for (int y = y0; y <= y1; y++)
-                for (int x = x0; x <= x1; x++)
+        var job = new DabJob(center, radius, texelWorld, hardness, n, hit.Normal, textureSize, tex.Width, tex.Height);
+        if (candidates.Count < 64)
+        {
+            var local = TakeList();
+            foreach (var (part, t) in candidates) DabTriangle(part, t, job, local);
+            Merge(local);
+        }
+        else
+        {
+            // Big dabs: split the triangles across cores, each writing its own list, then merge.
+            Parallel.ForEach(System.Collections.Concurrent.Partitioner.Create(0, candidates.Count, 32),
+                () => TakeList(),
+                (range, _, local) =>
                 {
-                    var texel = new Vector2(x + 0.5f, y + 0.5f);
-                    var bary = Raycast.Barycentric2D(texel, ua, ub, uc);
-                    if (bary.X < 0 || bary.Y < 0 || bary.Z < 0)
-                    {
-                        // Texels straddling the island's edge: use the nearest point of the triangle if it is
-                        // within half a texel diagonal, so island borders get painted too.
-                        var nearest = ClosestPointOnTriangle(texel, ua, ub, uc);
-                        if (Vector2.DistanceSquared(nearest, texel) > 0.5f) continue;
-                        bary = Raycast.Barycentric2D(nearest, ua, ub, uc);
-                    }
-                    Vector3 point = a * bary.X + b * bary.Y + c * bary.Z;
-                    // Skip texels that can't reach the brush (centre farther than the radius plus a texel diagonal).
-                    if (Vector3.Distance(point, center) > radius + texelWorld * 0.75f) continue;
+                    for (int i = range.Item1; i < range.Item2; i++) DabTriangle(candidates[i].Part, candidates[i].Triangle, job, local);
+                    return local;
+                },
+                local => { lock (finished) finished.Add(local); });
+            foreach (var local in finished) Merge(local);
+            finished.Clear();
+        }
 
-                    // Coverage: sample points inside the texel, placed on the surface through this triangle's plane
-                    // (extrapolated past its edges, where the neighbouring triangle continues the same island).
-                    float sum = 0;
-                    for (int sy = 0; sy < n; sy++)
-                    for (int sx = 0; sx < n; sx++)
-                    {
-                        var q = Raycast.Barycentric2D(new Vector2(x + (sx + 0.5f) / n, y + (sy + 0.5f) / n), ua, ub, uc);
-                        sum += Falloff(Vector3.Distance(a * q.X + b * q.Y + c * q.Z, center) / radius, hardness);
-                    }
-                    stroke.Apply(x, y, sum / (n * n));
-                }
+        // Each texel once per dab, at the strongest coverage any triangle gave it.
+        foreach (int i in touched)
+        {
+            stroke.Apply(i % tex.Width, i / tex.Width, dabShape[i]);
+            dabShape[i] = 0;
+        }
+        touched.Clear();
+    }
+
+    private readonly record struct DabJob(Vector3 Center, float Radius, float TexelWorld, float Hardness, int Samples,
+        Vector3 HitNormal, Vector2 TextureSize, int Width, int Height);
+
+    private static readonly List<(MeshPart Part, int Triangle)> candidates = new();
+    private static readonly List<List<(int Index, float Shape)>> finished = new();
+    private static readonly System.Collections.Concurrent.ConcurrentBag<List<(int, float)>> listPool = new();
+    private static float[] dabShape = Array.Empty<float>();
+    private static readonly List<int> touched = new();
+
+    private static List<(int, float)> TakeList()
+    {
+        if (!listPool.TryTake(out var list)) list = new List<(int, float)>(256);
+        list.Clear();
+        return list;
+    }
+
+    private static void Merge(List<(int Index, float Shape)> local)
+    {
+        foreach (var (index, shape) in local)
+        {
+            if (index >= dabShape.Length) Array.Resize(ref dabShape, Math.Max(index + 1, dabShape.Length * 2));
+            if (dabShape[index] == 0) touched.Add(index);
+            if (shape > dabShape[index]) dabShape[index] = shape;
+        }
+        listPool.Add(local);
+    }
+
+    /// <summary>One triangle's share of a dab: the texels its surface brings inside the brush, with coverage.</summary>
+    private static void DabTriangle(MeshPart part, int t, in DabJob job, List<(int, float)> output)
+    {
+        var positions = part.Positions;
+        var uvs = part.Uvs!;
+        var idx = part.Indices;
+        Vector3 center = job.Center;
+        float radius = job.Radius;
+        Vector3 a = positions[idx[t * 3]], b = positions[idx[t * 3 + 1]], c = positions[idx[t * 3 + 2]];
+        Vector3 lo = Vector3.Min(Vector3.Min(a, b), c) - new Vector3(radius);
+        Vector3 hi = Vector3.Max(Vector3.Max(a, b), c) + new Vector3(radius);
+        if (center.X < lo.X || center.Y < lo.Y || center.Z < lo.Z || center.X > hi.X || center.Y > hi.Y || center.Z > hi.Z) return;
+
+        Vector3 normal = Vector3.Cross(b - a, c - a);
+        float len = normal.Length();
+        if (len < 1e-12f) return;
+        normal /= len;
+        if (Vector3.Dot(normal, job.HitNormal) < 0.2f) return;
+
+        Vector2 size = job.TextureSize;
+        Vector2 ua = uvs[idx[t * 3]] * size, ub = uvs[idx[t * 3 + 1]] * size, uc = uvs[idx[t * 3 + 2]] * size;
+        if (!TexelWindow(a, b, c, normal, ua, ub, uc, center, radius, out Vector2 wMin, out Vector2 wMax)) return;
+
+        int n = job.Samples;
+        int x0 = (int)MathF.Floor(wMin.X), x1 = (int)MathF.Ceiling(wMax.X);
+        int y0 = (int)MathF.Floor(wMin.Y), y1 = (int)MathF.Ceiling(wMax.Y);
+        for (int y = y0; y <= y1; y++)
+        for (int x = x0; x <= x1; x++)
+        {
+            var texel = new Vector2(x + 0.5f, y + 0.5f);
+            var bary = Raycast.Barycentric2D(texel, ua, ub, uc);
+            if (bary.X < 0 || bary.Y < 0 || bary.Z < 0)
+            {
+                // Texels straddling the island's edge: use the nearest point of the triangle if it is
+                // within half a texel diagonal, so island borders get painted too.
+                var nearest = ClosestPointOnTriangle(texel, ua, ub, uc);
+                if (Vector2.DistanceSquared(nearest, texel) > 0.5f) continue;
+                bary = Raycast.Barycentric2D(nearest, ua, ub, uc);
             }
+            Vector3 point = a * bary.X + b * bary.Y + c * bary.Z;
+            // Skip texels that can't reach the brush (centre farther than the radius plus a texel diagonal).
+            if (Vector3.Distance(point, center) > radius + job.TexelWorld * 0.75f) continue;
+
+            // Coverage: sample points inside the texel, placed on the surface through this triangle's plane
+            // (extrapolated past its edges, where the neighbouring triangle continues the same island).
+            float sum = 0;
+            for (int sy = 0; sy < n; sy++)
+            for (int sx = 0; sx < n; sx++)
+            {
+                var q = Raycast.Barycentric2D(new Vector2(x + (sx + 0.5f) / n, y + (sy + 0.5f) / n), ua, ub, uc);
+                sum += Falloff(Vector3.Distance(a * q.X + b * q.Y + c * q.Z, center) / radius, job.Hardness);
+            }
+            if (sum <= 0) continue;
+            int wx = ((x % job.Width) + job.Width) % job.Width, wy = ((y % job.Height) + job.Height) % job.Height;
+            output.Add((wy * job.Width + wx, sum / (n * n)));
         }
     }
 

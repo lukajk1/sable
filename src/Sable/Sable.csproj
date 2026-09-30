@@ -9,7 +9,13 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>Sable</RootNamespace>
     <AssemblyName>Sable</AssemblyName>
+    <ApplicationIcon>..\..\assets\icon\sable.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The window icon (raylib wants an image, not the .ico). -->
+    <EmbeddedResource Include="..\..\assets\icon\sable-64.png" LogicalName="Sable.icon.png" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- WinForms is only here for the native Open dialog; its Color/Image/Rectangle clash with raylib's. -->

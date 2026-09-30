@@ -37,25 +37,25 @@ public static class Raycast
 
             var positions = part.Positions;
             var indices = part.Indices;
-            for (int t = 0; t < part.TriangleCount; t++)
+            bool Accept(int t, float distance, float u, float v)
             {
-                if (!part.TriangleVisible(t)) continue;
+                if (!part.TriangleVisible(t)) return false;
                 Vector3 a = positions[indices[t * 3]], b = positions[indices[t * 3 + 1]], c = positions[indices[t * 3 + 2]];
-                if (!IntersectTriangle(origin, direction, a, b, c, out float distance, out float u, out float v)) continue;
-                if (distance >= hit.Distance) continue;
-                var normal = Vector3.Normalize(Vector3.Cross(b - a, c - a));
-                if (Vector3.Dot(normal, direction) >= 0) continue;
-                hit = new SurfaceHit
-                {
-                    Part = p,
-                    Triangle = t,
-                    Distance = distance,
-                    Point = origin + direction * distance,
-                    Normal = normal,
-                    Barycentric = new Vector3(1 - u - v, u, v),
-                };
-                found = true;
+                return Vector3.Dot(Vector3.Cross(b - a, c - a), direction) < 0;
             }
+            if (!part.Bvh.Raycast(origin, direction, hit.Distance, positions, indices, Accept, out int tri, out float dist, out float hu, out float hv))
+                continue;
+            Vector3 ta = positions[indices[tri * 3]], tb = positions[indices[tri * 3 + 1]], tc = positions[indices[tri * 3 + 2]];
+            hit = new SurfaceHit
+            {
+                Part = p,
+                Triangle = tri,
+                Distance = dist,
+                Point = origin + direction * dist,
+                Normal = Vector3.Normalize(Vector3.Cross(tb - ta, tc - ta)),
+                Barycentric = new Vector3(1 - hu - hv, hu, hv),
+            };
+            found = true;
         }
         return found;
     }

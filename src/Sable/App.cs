@@ -188,6 +188,7 @@ internal sealed class App : IDisposable
         Raylib.SetConfigFlags(ConfigFlags.ResizableWindow | ConfigFlags.Msaa4xHint | ConfigFlags.VSyncHint);
         Raylib.InitWindow(1600, 900, "Sable");
         unsafe { PenInput.Attach((IntPtr)Raylib.GetWindowHandle()); }
+        SetWindowIcon();
         Raylib.SetWindowMinSize(900, 560);
         ApplySettings();
         Raylib.SetExitKey(KeyboardKey.Null);
@@ -225,6 +226,7 @@ internal sealed class App : IDisposable
             HandleShortcuts();
             UpdateTools(free);
             RunSelfTest();
+            RunBench();
             profiler.Mark("tools");
             Model?.UploadTextures();
             UpdateTitle();
@@ -285,6 +287,19 @@ internal sealed class App : IDisposable
     }
 
     private static readonly string[] TextureViewNames = { "Pixel (nearest)", "Smooth (bilinear)", "Smooth + mipmaps" };
+
+    /// <summary>The title bar and taskbar icon, from the PNG embedded in the exe.</summary>
+    private static void SetWindowIcon()
+    {
+        using var stream = typeof(App).Assembly.GetManifestResourceStream("Sable.icon.png");
+        if (stream == null) return;
+        using var memory = new MemoryStream();
+        stream.CopyTo(memory);
+        Image icon = Raylib.LoadImageFromMemory(".png", memory.ToArray());
+        Raylib.ImageFormat(ref icon, PixelFormat.UncompressedR8G8B8A8);
+        Raylib.SetWindowIcon(icon);
+        Raylib.UnloadImage(icon);
+    }
 
     // ---------- layout ----------
 
@@ -413,7 +428,8 @@ internal sealed class App : IDisposable
         var s = Model.Source;
         SetStatus($"Opened {s.Name}: {s.Objects.Count} objects, {s.Parts.Sum(p => p.TriangleCount)} tris, {s.Textures.Count} textures"
                   + (s.Warnings.Count > 0 ? $", {s.Warnings.Count} warnings" : ""), error: false);
-        if (options.SelfTest) selfTestStep = 0;
+        if (options.Bench) benchStep = 0;
+        else if (options.SelfTest) selfTestStep = 0;
         else if (options.ScreenshotPath != null) screenshotFrames = 4;
     }
 
@@ -882,6 +898,7 @@ internal sealed class App : IDisposable
                 else if (painting)
                 {
                     if (hasHit) Begin3D(hit);
+                    else if (NearActiveObject(out var near)) Begin3D(near, dab: false);
                     else if (!ObjectUnderMouse()) view3d.BeginLeftDragNavigation();
                     else if (state.ActiveObject < 0) SetStatus("Select an object to paint (V, then click it).", error: true);
                     else SetStatus($"Only the active object ({source.Objects[state.ActiveObject].Name}) is painted; select another with V.", error: false);
@@ -895,6 +912,7 @@ internal sealed class App : IDisposable
                 else if (tool == Tool.Fill)
                 {
                     if (hasHit) FillFrom(hit);
+                    else if (NearActiveObject(out _)) { }
                     else if (!ObjectUnderMouse()) view3d.BeginLeftDragNavigation();
                     else if (state.ActiveObject < 0) SetStatus("Select an object to fill (V, then click it).", error: true);
                 }
@@ -1211,7 +1229,31 @@ internal sealed class App : IDisposable
         }
     }
 
-    private void Begin3D(SurfaceHit hit)
+    /// <summary>
+    /// The halo around the active object: whether a press that just missed it is within the brush's screen radius
+    /// (at least 16 px) of its surface, and where. Such a press starts a stroke that paints once the brush reaches
+    /// the surface, instead of turning into an accidental orbit.
+    /// </summary>
+    private bool NearActiveObject(out SurfaceHit near)
+    {
+        near = default;
+        if (Model == null || state.ActiveObject < 0 || !state.ObjectVisible(state.ActiveObject)) return false;
+        float halo = MathF.Max(16f, cursorScreenRadius);
+        var camera = view3d.Camera.ToRaylib();
+        bool OnActive(int i) => i == state.ActiveObject;
+        foreach (float reach in new[] { 0.35f, 0.7f, 1f })
+        for (int k = 0; k < 12; k++)
+        {
+            float angle = k / 12f * MathF.PI * 2f;
+            var point = view3d.LocalMouse + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * halo * reach;
+            var ray = Raylib.GetScreenToWorldRayEx(point, camera, view3d.Width, view3d.Height);
+            if (Raycast.Cast(Model.Source, ray.Position, ray.Direction, OnActive, out near)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>Starts a 3D stroke on the texture under <paramref name="hit"/>, with a first dab unless it came from the halo.</summary>
+    private void Begin3D(SurfaceHit hit, bool dab = true)
     {
         int texture = Model!.TextureOf(hit.Part);
         if (texture < 0 || !Model.Source.Parts[hit.Part].HasUvs)
@@ -1227,7 +1269,7 @@ internal sealed class App : IDisposable
         stroke = NewStroke(texture);
         lastPressure = FirstPressure();
         SetDab(lastPressure);
-        Dab3D(hit);
+        if (dab) Dab3D(hit);
         lastMouse = view3d.LocalMouse;
     }
 
@@ -1955,6 +1997,97 @@ internal sealed class App : IDisposable
 
     // ---------- checks without a human ----------
 
+    private int benchStep = -1;
+
+    /// <summary>
+    /// --bench: on the textured object with the most triangles, times hover ray casts, 3D strokes (pencil and
+    /// brushes of 8, 32 and 96 texels along the same circle), a UV-view stroke, stroke setup and the texture upload,
+    /// prints them and quits. Nothing is saved.
+    /// </summary>
+    private void RunBench()
+    {
+        if (benchStep < 0 || Model == null) return;
+        var source = Model.Source;
+        int TrianglesOf(int o) => source.Objects[o].Parts
+            .Where(p => source.Parts[p].HasUvs && Model.TextureOf(p) >= 0).Sum(p => source.Parts[p].TriangleCount);
+        if (benchStep == 0)
+        {
+            int best = Enumerable.Range(0, source.Objects.Count).OrderByDescending(TrianglesOf).FirstOrDefault(-1);
+            if (best < 0 || TrianglesOf(best) == 0)
+            {
+                Console.WriteLine("[bench] no textured object with UVs");
+                quit = true;
+                return;
+            }
+            SelectObject(best);
+            var obj = source.Objects[best];
+            view3d.Camera.Frame(obj.Min, obj.Max);
+            benchStep = 1;
+            return;
+        }
+        benchStep = -1;
+        quit = true;
+
+        var bench = new Benchmark();
+        int texture = state.ActiveTexture;
+        var tex = Model.Textures[texture];
+        var viewOrigin = new Vector2(PanelWidth, menuHeight);
+        var center = new Vector2(view3d.Width, view3d.Height) * 0.5f;
+        float radius = view3d.Height * 0.12f;
+        Vector2 Local(float t) => center + new Vector2(MathF.Cos(t), MathF.Sin(t)) * radius;
+        var camera = view3d.Camera.ToRaylib();
+        bool OnActive(int i) => i == state.ActiveObject;
+
+        int hits = 0;
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        for (int i = 0; i < 500; i++)
+        {
+            var ray = Raylib.GetScreenToWorldRayEx(Local(i * 0.05f), camera, view3d.Width, view3d.Height);
+            if (Raycast.Cast(source, ray.Position, ray.Direction, OnActive, out _)) hits++;
+        }
+        bench.Add("hover ray casts x500", watch.Elapsed.TotalMilliseconds, $"{hits} hit");
+
+        foreach (var (label, strokeTool, size) in new[] { ("pencil", Tool.Pencil, 1f), ("brush 8", Tool.Brush, 8f), ("brush 32", Tool.Brush, 32f), ("brush 96", Tool.Brush, 96f) })
+        {
+            tool = strokeTool;
+            brushSize = dabSize = size;
+            hardness = 0.5f;
+            var startRay = Raylib.GetScreenToWorldRayEx(Local(0), camera, view3d.Width, view3d.Height);
+            if (Raycast.Cast(source, startRay.Position, startRay.Direction, OnActive, out var startHit)) Show3DCursor(startHit);
+            FrameProfiler.Dabs = FrameProfiler.Raycasts = 0;
+            watch.Restart();
+            strokeTexture = texture;
+            strokeIn3D = true;
+            stroke = NewStroke(texture);
+            lastPressure = 1f;
+            SetDab(1f);
+            lastMouse = Local(0);
+            for (int i = 1; i <= 120; i++) Continue3D(viewOrigin + Local(i * 0.05f), 1f);
+            EndStroke();
+            bench.Add($"3D stroke, {label} (arc of 120 samples)", watch.Elapsed.TotalMilliseconds,
+                $"{FrameProfiler.Dabs} dabs, {FrameProfiler.Raycasts} ray casts, {cursorScreenRadius:0} px radius");
+        }
+
+        bench.Time("texture upload after the strokes", () => tex.Upload());
+
+        tool = Tool.Brush;
+        brushSize = dabSize = 64f;
+        bench.Time("UV stroke, brush 64 (100 dabs)", () =>
+        {
+            var uvStroke = NewStroke(texture);
+            for (int i = 0; i < 100; i++)
+                Brush.DabTexels(uvStroke, new Vector2(tex.Width * (0.2f + 0.006f * i), tex.Height * 0.5f), 64f, 0.5f);
+            if (uvStroke.Finish() is { } step) undo.Push(step);
+        });
+        bench.Time("stroke setup x10 (copy + clear buffers)", () =>
+        {
+            for (int i = 0; i < 10; i++) NewStroke(texture);
+        });
+
+        var active = source.Objects[state.ActiveObject];
+        bench.Print($"{source.Name} / {active.Name}: {TrianglesOf(state.ActiveObject)} tris, texture {tex.Width}x{tex.Height}");
+    }
+
     /// <summary>
     /// --selftest: selects the object, frames it, paints a brush dab and a pencil texel through the middle of the 3D
     /// view and a pencil line in the UV view, then takes the screenshot. Nothing is saved.
@@ -2146,7 +2279,7 @@ internal sealed class App : IDisposable
     /// Settings are read at start and written on close. Screenshot and self-test runs leave them alone, so they
     /// start from the defaults and don't overwrite what the user set.
     /// </summary>
-    private bool KeepsSettings => options.ScreenshotPath == null && !options.SelfTest;
+    private bool KeepsSettings => options.ScreenshotPath == null && !options.SelfTest && !options.Bench;
 
     private void ApplySettings()
     {
