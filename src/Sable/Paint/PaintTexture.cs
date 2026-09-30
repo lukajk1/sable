@@ -31,6 +31,8 @@ public sealed unsafe class PaintTexture : IDisposable
     public string? FilePath { get; set; }
     /// <summary>Changed since it was loaded or last saved.</summary>
     public bool Dirty { get; set; }
+    /// <summary>Goes up with every change to any layer, for caches such as the layer thumbnails.</summary>
+    public int Version { get; private set; }
 
     // What changed since the last upload: a rectangle, or everything. The composite may already be current for it.
     private bool needsUpload, uploadAll, compositeCurrent;
@@ -137,6 +139,7 @@ public sealed unsafe class PaintTexture : IDisposable
         needsUpload = uploadAll = true;
         compositeCurrent = false;
         Dirty = true;
+        Version++;
     }
 
     /// <summary>Marks one texel as changed; only the changed rectangle is uploaded.</summary>
@@ -148,6 +151,7 @@ public sealed unsafe class PaintTexture : IDisposable
         needsUpload = true;
         compositeCurrent = false;
         Dirty = true;
+        Version++;
         dirtyX0 = Math.Min(dirtyX0, x0);
         dirtyY0 = Math.Min(dirtyY0, y0);
         dirtyX1 = Math.Max(dirtyX1, x1);

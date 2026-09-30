@@ -14,6 +14,21 @@ internal sealed partial class App
     private static readonly int[] TextureSizes = { 16, 32, 64, 128, 256, 512, 1024, 2048, 4096 };
     private static readonly string[] FillNames = { "Material colour", "White", "Paint colour", "Transparent" };
 
+    private const int ThumbSize = 34;
+    /// <summary>Most rows the layer list shows before it scrolls.</summary>
+    private const int LayerRows = 6;
+
+    private sealed class Thumbnail
+    {
+        public Texture2D Gpu;
+        public int Version = -1;
+        public double Made;
+        public int Seen;
+    }
+    private readonly Dictionary<Layer, Thumbnail> thumbnails = new();
+    private readonly Color[] thumbnailPixels = new Color[ThumbSize * ThumbSize];
+    private int thumbnailFrame;
+
     private bool layersOpen = true;
     private LayerState? layerDragBefore;
     private int renamingLayer = -1;
@@ -133,18 +148,26 @@ internal sealed partial class App
         }
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Layer opacity");
 
-        float rows = MathF.Min(texture.Layers.Count, 8) * ImGui.GetFrameHeightWithSpacing() + ImGui.GetStyle().WindowPadding.Y * 2;
-        ImGui.BeginChild("##layerlist", new Vector2(0, rows), ImGuiChildFlags.Borders);
+        float rows = MathF.Min(texture.Layers.Count, LayerRows) * (ThumbSize + ImGui.GetStyle().ItemSpacing.Y) + ImGui.GetStyle().WindowPadding.Y * 2 + ImGui.GetStyle().ItemSpacing.Y;
+        ImGui.BeginChild("##layerlist", new Vector2(0, rows), ImGuiChildFlags.Borders,
+            texture.Layers.Count <= LayerRows ? ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse : ImGuiWindowFlags.None);
         for (int i = texture.Layers.Count - 1; i >= 0; i--)
         {
             var layer = texture.Layers[i];
             ImGui.PushID(i);
+            float rowY = ImGui.GetCursorPosY();
+            float centred = rowY + (ThumbSize - ImGui.GetFrameHeight()) * 0.5f;
+            ImGui.SetCursorPosY(centred);
             bool visible = layer.Visible;
             if (ImGui.Checkbox("##visible", ref visible)) LayerEdit(texture, () => layer.Visible = visible);
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("Show / hide");
             ImGui.SameLine();
+            ImGui.SetCursorPosY(rowY);
             if (renamingLayer == i)
             {
+                ImGui.Image(new IntPtr(ThumbnailOf(texture, layer).Gpu.Id), new Vector2(ThumbSize));
+                ImGui.SameLine();
+                ImGui.SetCursorPosY(centred);
                 ImGui.SetNextItemWidth(-1);
                 if (ImGui.IsWindowAppearing() || !ImGui.IsAnyItemActive()) ImGui.SetKeyboardFocusHere();
                 bool done = ImGui.InputText("##name", ref renameBuffer, 64, ImGuiInputTextFlags.EnterReturnsTrue | ImGuiInputTextFlags.AutoSelectAll);
@@ -160,8 +183,15 @@ internal sealed partial class App
                 string label = layer.Name;
                 if (layer.Blend != BlendMode.Normal) label += $"  {layer.Blend}";
                 if (layer.Opacity < 1f) label += $"  {layer.Opacity * 100f:0}%";
-                if (!layer.Visible) ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);
-                if (ImGui.Selectable($"{label}##layer", i == texture.ActiveLayerIndex, ImGuiSelectableFlags.AllowDoubleClick))
+                // The whole row (thumbnail and name) is one selectable; the thumbnail and name are drawn over it.
+                var at = ImGui.GetCursorScreenPos();
+                bool clicked = ImGui.Selectable("##layer", i == texture.ActiveLayerIndex, ImGuiSelectableFlags.AllowDoubleClick, new Vector2(0, ThumbSize));
+                var draw = ImGui.GetWindowDrawList();
+                draw.AddImage(new IntPtr(ThumbnailOf(texture, layer).Gpu.Id), at, at + new Vector2(ThumbSize));
+                draw.AddRect(at - Vector2.One, at + new Vector2(ThumbSize + 1), ImGui.GetColorU32(ImGuiCol.Border));
+                uint text = ImGui.GetColorU32(layer.Visible ? ImGuiCol.Text : ImGuiCol.TextDisabled);
+                draw.AddText(at + new Vector2(ThumbSize + 8, (ThumbSize - ImGui.GetTextLineHeight()) * 0.5f), text, label);
+                if (clicked)
                 {
                     EndStroke();
                     texture.ActiveLayerIndex = i;
@@ -171,7 +201,6 @@ internal sealed partial class App
                         renameBuffer = layer.Name;
                     }
                 }
-                if (!layer.Visible) ImGui.PopStyleColor();
                 if (ImGui.IsItemHovered()) ImGui.SetTooltip("Click to paint on it, double-click to rename");
             }
             ImGui.PopID();
@@ -203,6 +232,70 @@ internal sealed partial class App
             : "Paint goes to the selected layer. Saving writes the flattened image.");
         ImGui.PopStyleColor();
         ImGui.End();
+    }
+
+    /// <summary>
+    /// A layer's thumbnail: its pixels scaled to fit <see cref="ThumbSize"/> (box-filtered, aspect kept) over a
+    /// checkerboard. Remade when the texture changes, at most four times a second while painting.
+    /// </summary>
+    private Thumbnail ThumbnailOf(PaintTexture texture, Layer layer)
+    {
+        if (!thumbnails.TryGetValue(layer, out var thumb))
+        {
+            Image blank = Raylib.GenImageColor(ThumbSize, ThumbSize, new Color(0, 0, 0, 0));
+            thumb = new Thumbnail { Gpu = Raylib.LoadTextureFromImage(blank) };
+            Raylib.UnloadImage(blank);
+            thumbnails[layer] = thumb;
+        }
+        thumb.Seen = thumbnailFrame;
+        double now = Raylib.GetTime();
+        if (thumb.Version == texture.Version || (thumb.Version >= 0 && now - thumb.Made < 0.25)) return thumb;
+        thumb.Version = texture.Version;
+        thumb.Made = now;
+
+        float scale = MathF.Max(texture.Width, texture.Height) / (float)ThumbSize;
+        int contentW = Math.Max(1, (int)MathF.Round(texture.Width / scale)), contentH = Math.Max(1, (int)MathF.Round(texture.Height / scale));
+        int offsetX = (ThumbSize - contentW) / 2, offsetY = (ThumbSize - contentH) / 2;
+        int grid = Math.Clamp((int)MathF.Ceiling(scale), 1, 4);
+        var pixels = layer.Pixels;
+        Array.Clear(thumbnailPixels);
+        for (int ty = 0; ty < contentH; ty++)
+        for (int tx = 0; tx < contentW; tx++)
+        {
+            // Average a few samples across the texels this thumbnail pixel covers, weighting colour by alpha.
+            float r = 0, g = 0, b = 0, a = 0;
+            for (int sy = 0; sy < grid; sy++)
+            for (int sx = 0; sx < grid; sx++)
+            {
+                int x = Math.Min(texture.Width - 1, (int)((tx + (sx + 0.5f) / grid) * scale));
+                int y = Math.Min(texture.Height - 1, (int)((ty + (sy + 0.5f) / grid) * scale));
+                var c = pixels[y * texture.Width + x];
+                float ca = c.A / 255f;
+                r += c.R * ca; g += c.G * ca; b += c.B * ca; a += ca;
+            }
+            float n = grid * grid;
+            float alpha = a / n;
+            float check = ((tx / 4 + ty / 4) & 1) == 0 ? 200f : 150f;
+            float Mix(float sum) => a > 0 ? (sum / a) * alpha + check * (1f - alpha) : check;
+            thumbnailPixels[(ty + offsetY) * ThumbSize + tx + offsetX] =
+                new Color((byte)Mix(r), (byte)Mix(g), (byte)Mix(b), (byte)255);
+        }
+        unsafe
+        {
+            fixed (Color* data = thumbnailPixels) Raylib.UpdateTexture(thumb.Gpu, data);
+        }
+        return thumb;
+    }
+
+    /// <summary>Frees thumbnails of layers not shown for a couple of seconds (deleted, or another texture's).</summary>
+    private void PruneThumbnails()
+    {
+        thumbnailFrame++;
+        foreach (var (layer, thumb) in thumbnails.Where(kv => thumbnailFrame - kv.Value.Seen > 120).ToList())
+        {
+            Raylib.UnloadTexture(thumb.Gpu);
+            thumbnails.Remove(layer);
+        }
     }
 
     // ---------- New texture ----------

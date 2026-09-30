@@ -254,6 +254,7 @@ internal sealed partial class App : IDisposable
             DrawStatusBar(w, h);
             DrawUvToolbar();
             DrawLayersWindow();
+            PruneThumbnails();
             DrawOpenPathPopup();
             DrawNewTexturePopup();
             DrawColorPicker();

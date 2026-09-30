@@ -112,7 +112,7 @@ The lasso and box select make a selection of texels on the texture the UV view s
 
 Each texture is a stack of layers, in the Layers window at the top right of the UV view (its arrow folds it away). The paint tools, fill and selection moves change the selected layer; the views, the eyedropper and saving see all the visible layers together.
 
-- **The list:** top layer first. The checkbox shows and hides a layer; click a layer to paint on it, double-click to rename it.
+- **The list:** top layer first, each with a thumbnail of its own pixels over a checkerboard (refreshed a few times a second while painting). The checkbox shows and hides a layer; click a layer to paint on it, double-click to rename it.
 - **Blend mode and opacity** (above the list) are the selected layer's: Normal, Multiply (shading), Screen (light), Overlay (contrast) or Add (glow), at 0-100%.
 - **Buttons:** New (a transparent layer above the selected one), Copy, Del, Up, Dn, Merge down (into the layer below, keeping its name and settings) and Flatten (everything into one).
 - **Keys** (Photoshop's): Ctrl+Shift+N new layer, Ctrl+J duplicate, Ctrl+E merge down. They're in the Edit menu too.
