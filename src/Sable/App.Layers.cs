@@ -11,8 +11,15 @@ namespace Sable;
 internal sealed partial class App
 {
     private const float LayersWidth = 250f;
-    /// <summary>Power-of-two sizes only: they mip down evenly and compress (BC/DXT, ASTC) without padding.</summary>
+    /// <summary>Quick picks for the size; any multiple of 4 up to 4096 can be typed.</summary>
     private static readonly int[] TextureSizes = { 16, 32, 64, 128, 256, 512, 1024, 2048, 4096 };
+    private const int MaxTextureSize = 4096;
+
+    /// <summary>
+    /// The nearest allowed size: a multiple of 4 (block compression works in 4x4 blocks) from 4 to
+    /// <see cref="MaxTextureSize"/>.
+    /// </summary>
+    private static int ValidTextureSize(int size) => Math.Clamp((int)MathF.Round(size / 4f) * 4, 4, MaxTextureSize);
     private static readonly string[] FillNames = { "Material colour", "White", "Paint colour", "Transparent" };
 
     private const int ThumbSize = 34;
@@ -338,7 +345,7 @@ internal sealed partial class App
             material = candidates.FirstOrDefault(m => Model.Source.Materials[m].TextureIndex == state.ActiveTexture && state.ActiveTexture >= 0, candidates[0]);
         newTextureMaterial = material;
         newTextureName = Path.GetFileNameWithoutExtension(Model.UniqueTextureName(Model.Source.Materials[material].Name));
-        if (ActiveTextureObject is { } current && current.Width == current.Height && TextureSizes.Contains(current.Width))
+        if (ActiveTextureObject is { } current && current.Width == current.Height && current.Width == ValidTextureSize(current.Width))
             newTextureSize = current.Width;
         uvOverlaps = Sable.Model.MeshCheck.UvOverlaps(Model.Source, 256);
         SuggestSharedMaterials(material, candidates);
@@ -387,14 +394,23 @@ internal sealed partial class App
             ImGui.EndCombo();
         }
 
-        ImGui.SetNextItemWidth(220);
-        if (ImGui.BeginCombo("Size", $"{newTextureSize} x {newTextureSize}"))
+        // Square, any multiple of 4: typed, stepped by 4 (Ctrl: 64), or picked from the common sizes.
+        ImGui.SetNextItemWidth(140);
+        int typed = newTextureSize;
+        if (ImGui.InputInt("##size", ref typed, 4, 64)) newTextureSize = typed;
+        if (ImGui.IsItemDeactivatedAfterEdit() || !ImGui.IsItemActive()) newTextureSize = ValidTextureSize(newTextureSize);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Square, any multiple of 4 (block compression works in 4x4 blocks).\nPowers of two (the list) also mip down evenly; that matters for textures seen at a distance with mipmaps on.");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(72);
+        if (ImGui.BeginCombo("Size", TextureSizes.Contains(newTextureSize) ? newTextureSize.ToString() : "...", ImGuiComboFlags.HeightLarge))
         {
             foreach (int size in TextureSizes)
-                if (ImGui.Selectable($"{size} x {size}", size == newTextureSize)) newTextureSize = size;
+                if (ImGui.Selectable(size.ToString(), size == newTextureSize)) newTextureSize = size;
             ImGui.EndCombo();
         }
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Square, in powers of two, so the texture mips down evenly and compresses cleanly in game engines.");
+        ImGui.SameLine();
+        ImGui.TextDisabled($"= {newTextureSize} x {newTextureSize}");
 
         if (candidates.Count > 1)
         {
@@ -437,6 +453,7 @@ internal sealed partial class App
 
         if (ImGui.Button("Create", new Vector2(100, 0)) || ImGui.IsKeyPressed(ImGuiKey.Enter))
         {
+            newTextureSize = ValidTextureSize(newTextureSize);
             CreateNewTexture(name);
             ImGui.CloseCurrentPopup();
         }

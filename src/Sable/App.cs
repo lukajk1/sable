@@ -2346,7 +2346,7 @@ internal sealed partial class App : IDisposable
         uvView.PixelGrid = saved.UvTexelGrid;
         uvView.ShowSiblings = saved.UvShowSiblings;
         split = Math.Clamp(saved.Split, 0.15f, 0.85f);
-        if (TextureSizes.Contains(saved.NewTextureSize)) newTextureSize = saved.NewTextureSize;
+        newTextureSize = ValidTextureSize(saved.NewTextureSize);
         fillAllLayers = saved.FillAllLayers;
         if (saved.RecentFolders != null) fileBrowser.RecentFolders.AddRange(saved.RecentFolders.Where(Directory.Exists).Take(8));
         layersOpen = saved.LayersOpen;
