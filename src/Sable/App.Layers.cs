@@ -2,6 +2,7 @@ using System.Numerics;
 using ImGuiNET;
 using Raylib_cs;
 using Sable.Paint;
+using Sable.UI;
 using BlendMode = Sable.Paint.BlendMode;
 
 namespace Sable;
@@ -101,7 +102,7 @@ internal sealed partial class App
     private void ImportImageAsLayer()
     {
         if (ActiveTextureObject is not { } texture) return;
-        Pick(false, "Import image as layer", FileDialogs.ImageFilter, null, path =>
+        Pick(false, "Import image as layer", FileBrowser.ImageFilter, null, path =>
         {
             var pixels = PaintTexture.DecodeImage(Path.GetExtension(path).ToLowerInvariant(), File.ReadAllBytes(path),
                 texture.Width, texture.Height, out _, out _);

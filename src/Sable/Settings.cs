@@ -31,6 +31,8 @@ internal sealed class Settings
     public float Split { get; set; } = 0.5f;
     public int NewTextureSize { get; set; } = 256;
     public bool LayersOpen { get; set; } = true;
+    /// <summary>The file browser's recent folders, newest first.</summary>
+    public List<string>? RecentFolders { get; set; }
 
     // Window (0 = leave to the default).
     public int WindowX { get; set; }

@@ -2,11 +2,8 @@ namespace Sable;
 
 internal static class Program
 {
-    // STA for the WinForms file dialogs (shown by the --pick helper process).
-    [STAThread]
     private static int Main(string[] args)
     {
-        if (args.Length > 0 && args[0] == "--pick") return FileDialogs.RunPicker(args);
         if (args.Length > 1 && args[0] == "--check")
         {
             Model.MeshCheck.Print(Model.ModelLoader.Load(args[1], _ => { }));

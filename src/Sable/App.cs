@@ -203,7 +203,6 @@ internal sealed partial class App : IDisposable
         while (!Raylib.WindowShouldClose() && !quit)
         {
             FinishLoad();
-            FinishPick();
             HandleDroppedFiles();
             profiler.Mark("load");
 
@@ -258,6 +257,7 @@ internal sealed partial class App : IDisposable
             DrawLayersWindow();
             PruneThumbnails();
             DrawOpenPathPopup();
+            fileBrowser.Draw(new Vector2(w, h));
             DrawNewTexturePopup();
             DrawColorPicker();
             DrawToolCursor();
@@ -447,49 +447,31 @@ internal sealed partial class App : IDisposable
     }
 
     // A file dialog open in the helper process, and what to do with its answer.
-    private Task<string?>? picking;
-    private Action<string>? onPicked;
+    private readonly FileBrowser fileBrowser = new();
     private bool openPathPopup;
     private string pathInput = "";
 
     private string? ModelDirectory => Model != null ? Path.GetDirectoryName(Model.Source.SourcePath) : null;
 
+    /// <summary>Asks for a file with Sable's own browser, then runs <paramref name="then"/> on it (errors go to the status bar).</summary>
     private void Pick(bool save, string title, string filter, string? fileName, Action<string> then)
     {
-        if (picking != null) return;
-        picking = FileDialogs.PickAsync(save, title, filter, ModelDirectory, fileName);
-        onPicked = then;
-        SetStatus($"{title}: waiting for the file dialog...", error: false);
+        if (fileBrowser.IsOpen) return;
+        fileBrowser.Open(save, title, filter, ModelDirectory, fileName, path =>
+        {
+            try { then(path); }
+            catch (Exception e) { SetStatus(e.Message, error: true); }
+        });
     }
 
-    private void FinishPick()
-    {
-        if (picking is not { IsCompleted: true } task) return;
-        picking = null;
-        var then = onPicked;
-        onPicked = null;
-        if (task.IsFaulted)
-        {
-            SetStatus((task.Exception!.InnerException ?? task.Exception).Message, error: true);
-            return;
-        }
-        if (task.Result is not { } path)
-        {
-            SetStatus("Cancelled.", error: false);
-            return;
-        }
-        try { then?.Invoke(path); }
-        catch (Exception e) { SetStatus(e.Message, error: true); }
-    }
-
-    private void OpenDialog() => Pick(false, "Open model", FileDialogs.ModelFilter, null, StartLoad);
+    private void OpenDialog() => Pick(false, "Open model", FileBrowser.ModelFilter, null, StartLoad);
 
     /// <summary>Replaces the active texture's pixels with an image file; it still saves to its own file.</summary>
     private void ImportImage()
     {
         if (Model == null || state.ActiveTexture < 0) return;
         int index = state.ActiveTexture;
-        Pick(false, "Import image into texture", FileDialogs.ImageFilter, null, path =>
+        Pick(false, "Import image into texture", FileBrowser.ImageFilter, null, path =>
         {
             var old = Model.Textures[index];
             var image = PaintTexture.FromEncoded(old.Name, Path.GetExtension(path).ToLowerInvariant(), File.ReadAllBytes(path), old.FilePath);
@@ -513,7 +495,7 @@ internal sealed partial class App : IDisposable
     {
         if (Model == null || state.ActiveTexture < 0) return;
         var texture = Model.Textures[state.ActiveTexture];
-        Pick(true, "Export texture", FileDialogs.PngFilter, Path.ChangeExtension(texture.Name, ".png"), path =>
+        Pick(true, "Export texture", FileBrowser.PngFilter, Path.ChangeExtension(texture.Name, ".png"), path =>
         {
             texture.ExportTo(path);
             SetStatus($"Exported {texture.Name} to {path}", error: false);
@@ -538,7 +520,7 @@ internal sealed partial class App : IDisposable
         string stem = texture >= 0 ? Path.GetFileNameWithoutExtension(Model.Textures[texture].Name)
             : state.ActiveObject >= 0 ? Model.Source.Objects[state.ActiveObject].Name : Path.GetFileNameWithoutExtension(Model.Source.Name);
         var size = uvView.TextureSize;
-        Pick(true, "Export UV layout", FileDialogs.PngFilter, $"{stem}_uv.png", path =>
+        Pick(true, "Export UV layout", FileBrowser.PngFilter, $"{stem}_uv.png", path =>
         {
             UvLayoutExport.Export(Model, parts, size, texture >= 0 ? Model.Textures[texture] : null, scale, overTexture, path);
             SetStatus($"Exported the UV layout ({size.X * scale:0}x{size.Y * scale:0}) to {path}", error: false);
@@ -2366,6 +2348,7 @@ internal sealed partial class App : IDisposable
         split = Math.Clamp(saved.Split, 0.15f, 0.85f);
         if (TextureSizes.Contains(saved.NewTextureSize)) newTextureSize = saved.NewTextureSize;
         fillAllLayers = saved.FillAllLayers;
+        if (saved.RecentFolders != null) fileBrowser.RecentFolders.AddRange(saved.RecentFolders.Where(Directory.Exists).Take(8));
         layersOpen = saved.LayersOpen;
 
         // Only restore a window placement that is still on a monitor.
@@ -2409,6 +2392,7 @@ internal sealed partial class App : IDisposable
             Split = split,
             NewTextureSize = newTextureSize,
             FillAllLayers = fillAllLayers,
+            RecentFolders = fileBrowser.RecentFolders.ToList(),
             LayersOpen = layersOpen,
             WindowMaximized = Raylib.IsWindowMaximized(),
         };

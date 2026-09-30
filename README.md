@@ -140,7 +140,7 @@ These are in the panel and the View menu:
 - **File > Export texture as:** writes a PNG copy without changing where Ctrl+S saves.
 - **File > Export UV layout:** writes the UV wireframe the UV view shows, at 1x to 8x the texture size. It's either black lines on transparent or white lines over the texture: a template for painting elsewhere, like Blender's Export UV Layout.
 
-File dialogs run in a separate helper process (`Sable.exe --pick ...`). Shell extensions that inject into them can crash (SHADE Sandbox's `shade.dll` did), and then only the helper dies. If a dialog fails, use File > Open path or drop the file on the window.
+Opening and saving use Sable's own file browser, not the Windows dialogs. Those load every installed shell extension, and SHADE Sandbox's `shade.dll` crashed them, even in a separate process. The browser has the model's folder, Desktop, Documents, Downloads, the drives and recent folders on the left, and a path bar that takes a pasted folder or file path. Double-click a folder to open it and a file to choose it; Backspace goes up. Saving over a file asks first.
 
 ## Settings
 
@@ -184,10 +184,10 @@ Environment: `SABLE_BLENDER` (the Blender to use), `SABLE_SETTINGS` (a different
 - `Paint/`: textures on the CPU (`PaintTexture`), their layers, blend modes and layer undo (`Layer`), the hidden layer file (`LayerFile`), strokes and the undo stack (`Stroke`), the pencil, brush, eraser and fill (`Brush`), and texel selections (`TexelSelection`, `SelectionMove`).
 - `Rendering/`: the raylib side: `GpuModel`, `LitShader`, `OutlineRenderer` (selection outline), `UvLayoutExport`, and `VisibilityStep` (undoable hiding).
 - `Views/`: the 3D view with its camera (`Viewport3D`, `OrbitCamera`) and the UV view (`UvView`).
-- `UI/`: the colour wheel.
+- `UI/`: the colour wheel and the file browser (`FileBrowser`).
 - `Input/`: pen input from Windows Ink (`PenInput`).
 - `Diagnostics/`: the frame profiler behind the hitch log, and the `--bench` table.
 - `assets/icon/`: the app icon (`sable.svg`, PNG sizes, `sable.ico`).
-- `App.cs`: the window, tools, selection and panels. `App.Layers.cs`: the Layers window, the New texture dialog and the layer keys. `EditorState.cs`: what's selected and shown. `Settings.cs`: what persists. `FileDialogs.cs`: the out-of-process dialogs. `Program.cs`: the command line.
+- `App.cs`: the window, tools, selection and panels. `App.Layers.cs`: the Layers window, the New texture dialog and the layer keys. `EditorState.cs`: what's selected and shown. `Settings.cs`: what persists. `Program.cs`: the command line.
 
 Built with .NET 9, [Raylib-cs](https://github.com/ChrisDill/Raylib-cs), [ImGui.NET](https://github.com/ImGuiNET/ImGui.NET) via [rlImGui-cs](https://github.com/raylib-extras/rlImGui-cs), and [AssimpNet](https://bitbucket.org/Starnick/assimpnet).
