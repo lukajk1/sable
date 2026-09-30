@@ -1,7 +1,7 @@
 using System.Numerics;
-using PixelPainter.Rendering;
+using Sable.Rendering;
 
-namespace PixelPainter;
+namespace Sable;
 
 public enum SelectMode { Object, Submesh }
 

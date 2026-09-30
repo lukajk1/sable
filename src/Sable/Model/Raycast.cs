@@ -1,6 +1,6 @@
 using System.Numerics;
 
-namespace PixelPainter.Model;
+namespace Sable.Model;
 
 public struct SurfaceHit
 {

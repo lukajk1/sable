@@ -1,7 +1,7 @@
 using System.Numerics;
-using PixelPainter.Model;
+using Sable.Model;
 
-namespace PixelPainter.Paint;
+namespace Sable.Paint;
 
 public enum Tool { Select, Pencil, Brush, Eyedropper, Lasso }
 

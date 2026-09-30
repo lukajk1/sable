@@ -1,9 +1,9 @@
 using System.Numerics;
-using PixelPainter.Model;
-using PixelPainter.Paint;
+using Sable.Model;
+using Sable.Paint;
 using Raylib_cs;
 
-namespace PixelPainter.Rendering;
+namespace Sable.Rendering;
 
 /// <summary>
 /// The GPU side of a <see cref="LoadedModel"/>: one raylib mesh per part (holding only its visible submeshes), one

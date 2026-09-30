@@ -7,8 +7,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <RootNamespace>PixelPainter</RootNamespace>
-    <AssemblyName>PixelPainter</AssemblyName>
+    <RootNamespace>Sable</RootNamespace>
+    <AssemblyName>Sable</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>

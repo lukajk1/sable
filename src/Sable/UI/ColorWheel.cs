@@ -1,7 +1,7 @@
 using System.Numerics;
 using ImGuiNET;
 
-namespace PixelPainter.UI;
+namespace Sable.UI;
 
 /// <summary>
 /// Photoshop-style picker: a hue ring around a saturation (left to right) / value (bottom to top) square.

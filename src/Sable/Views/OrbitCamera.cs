@@ -1,7 +1,7 @@
 using System.Numerics;
 using Raylib_cs;
 
-namespace PixelPainter.Views;
+namespace Sable.Views;
 
 /// <summary>
 /// Blender-style turntable camera: orbits a pivot with yaw (around world up) and pitch. Y is up, and "front"

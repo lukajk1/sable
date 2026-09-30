@@ -1,7 +1,7 @@
 using System.Numerics;
 using Assimp;
 
-namespace PixelPainter.Model;
+namespace Sable.Model;
 
 /// <summary>
 /// Reads FBX / glTF / GLB / OBJ (anything Assimp knows) and .blend (via <see cref="BlendConverter"/>) into a

@@ -1,4 +1,4 @@
-namespace PixelPainter;
+namespace Sable;
 
 internal static class Program
 {
@@ -13,7 +13,7 @@ internal static class Program
 }
 
 /// <summary>
-/// Command line: <c>PixelPainter [model] [--screenshot out.png] [--select name] [--selftest]</c>.
+/// Command line: <c>Sable [model] [--screenshot out.png] [--select name] [--selftest]</c>.
 /// <c>--screenshot</c> loads the model, renders a few frames, saves the window and exits (for checking the app
 /// without looking at it). <c>--select</c> makes the first object whose name contains it active.
 /// <c>--selftest</c> also paints a few test strokes (in memory only, never saved) before the screenshot.

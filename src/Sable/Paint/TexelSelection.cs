@@ -1,6 +1,6 @@
 using System.Numerics;
 
-namespace PixelPainter.Paint;
+namespace Sable.Paint;
 
 public enum SelectionOp { Replace, Add, Subtract }
 

@@ -1,14 +1,14 @@
 using System.Numerics;
 using ImGuiNET;
-using PixelPainter.Model;
-using PixelPainter.Paint;
-using PixelPainter.Rendering;
-using PixelPainter.UI;
-using PixelPainter.Views;
+using Sable.Model;
+using Sable.Paint;
+using Sable.Rendering;
+using Sable.UI;
+using Sable.Views;
 using Raylib_cs;
 using rlImGui_cs;
 
-namespace PixelPainter;
+namespace Sable;
 
 /// <summary>
 /// The window: a menu bar, a tool and object panel on the left, the 3D view and the UV view side by side (drag the
@@ -103,7 +103,7 @@ internal sealed class App : IDisposable
     public void Run()
     {
         Raylib.SetConfigFlags(ConfigFlags.ResizableWindow | ConfigFlags.Msaa4xHint | ConfigFlags.VSyncHint);
-        Raylib.InitWindow(1600, 900, "Pixel Painter");
+        Raylib.InitWindow(1600, 900, "Sable");
         Raylib.SetWindowMinSize(900, 560);
         Raylib.SetExitKey(KeyboardKey.Null);
         rlImGui.Setup(true);
@@ -356,8 +356,8 @@ internal sealed class App : IDisposable
 
     private void UpdateTitle()
     {
-        string next = Model == null ? "Pixel Painter"
-            : $"Pixel Painter - {Model.Source.Name}{(Model.Textures.Any(t => t.Dirty) ? " *" : "")}";
+        string next = Model == null ? "Sable"
+            : $"Sable - {Model.Source.Name}{(Model.Textures.Any(t => t.Dirty) ? " *" : "")}";
         if (next == title) return;
         title = next;
         Raylib.SetWindowTitle(title);

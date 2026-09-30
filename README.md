@@ -1,4 +1,4 @@
-# Pixel Painter
+# Sable
 
 A local tool for painting pixel textures on 3D models, both on the model and on its UV layout.
 
@@ -7,11 +7,11 @@ It opens a model and shows it in two views, 3D and the UV layout over the textur
 ## Run
 
 ```bash
-cd src/PixelPainter
+cd src/Sable
 dotnet run -- path/to/model.fbx
 ```
 
-Open models by dropping them on the window, with File > Open (Ctrl+O), or on the command line. It reads FBX, glTF/GLB, OBJ, DAE, 3DS and PLY through Assimp, and `.blend` files by running Blender in the background to export a temporary GLB, the same way Unity imports them. It uses the newest install under `Program Files/Blender Foundation`; set `PIXELPAINTER_BLENDER` to use a different `blender.exe`.
+Open models by dropping them on the window, with File > Open (Ctrl+O), or on the command line. It reads FBX, glTF/GLB, OBJ, DAE, 3DS and PLY through Assimp, and `.blend` files by running Blender in the background to export a temporary GLB, the same way Unity imports them. It uses the newest install under `Program Files/Blender Foundation`; set `SABLE_BLENDER` to use a different `blender.exe`.
 
 `--screenshot out.png` renders a few frames, saves the window and exits. `--select name` makes the first object whose name contains `name` active. `--selftest` also paints a few test strokes (in memory; nothing is saved) before the screenshot.
 

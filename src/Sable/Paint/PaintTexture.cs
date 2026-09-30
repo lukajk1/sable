@@ -1,6 +1,6 @@
 using Raylib_cs;
 
-namespace PixelPainter.Paint;
+namespace Sable.Paint;
 
 /// <summary>
 /// A paintable texture: RGBA pixels on the CPU (row 0 at the top, like the UV view) mirrored to a point-filtered GPU

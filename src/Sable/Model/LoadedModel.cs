@@ -1,6 +1,6 @@
 using System.Numerics;
 
-namespace PixelPainter.Model;
+namespace Sable.Model;
 
 /// <summary>A model as plain CPU data, independent of raylib: what the loader produces off the main thread.</summary>
 public sealed class LoadedModel

@@ -2,17 +2,17 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace PixelPainter.Model;
+namespace Sable.Model;
 
 /// <summary>
 /// Opens .blend files the way Unity does: runs Blender in the background to export a .glb, which Assimp then reads.
-/// Uses the newest "Blender Foundation/Blender x.y" install, or the PIXELPAINTER_BLENDER environment variable.
+/// Uses the newest "Blender Foundation/Blender x.y" install, or the SABLE_BLENDER environment variable.
 /// </summary>
 public static class BlendConverter
 {
     public static string? FindBlender()
     {
-        string? env = Environment.GetEnvironmentVariable("PIXELPAINTER_BLENDER");
+        string? env = Environment.GetEnvironmentVariable("SABLE_BLENDER");
         if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
 
         string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Blender Foundation");
@@ -39,11 +39,11 @@ public static class BlendConverter
     public static string Convert(string blendPath, Action<string> report, out Dictionary<string, string> imageFiles)
     {
         string blender = FindBlender() ?? throw new InvalidOperationException(
-            "Blender not found. Install it under Program Files/Blender Foundation or set PIXELPAINTER_BLENDER.");
+            "Blender not found. Install it under Program Files/Blender Foundation or set SABLE_BLENDER.");
 
         string full = Path.GetFullPath(blendPath);
         string hash = System.Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(full)))[..8];
-        string outDir = Path.Combine(Path.GetTempPath(), "PixelPainter");
+        string outDir = Path.Combine(Path.GetTempPath(), "Sable");
         Directory.CreateDirectory(outDir);
         string outPath = Path.Combine(outDir, $"{Path.GetFileNameWithoutExtension(full)}-{hash}.glb");
         string mapPath = Path.ChangeExtension(outPath, ".images.json");

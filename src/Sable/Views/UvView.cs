@@ -1,8 +1,8 @@
 using System.Numerics;
-using PixelPainter.Rendering;
+using Sable.Rendering;
 using Raylib_cs;
 
-namespace PixelPainter.Views;
+namespace Sable.Views;
 
 /// <summary>
 /// The UV view: the active texture (point-filtered) with the active object's UV layout over it. MMB drag pans, the

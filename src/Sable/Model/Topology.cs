@@ -1,6 +1,6 @@
 using System.Numerics;
 
-namespace PixelPainter.Model;
+namespace Sable.Model;
 
 /// <summary>Splits a mesh into loose connected pieces (submeshes).</summary>
 public static class Topology

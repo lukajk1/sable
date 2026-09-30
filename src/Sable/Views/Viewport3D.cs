@@ -1,8 +1,8 @@
 using System.Numerics;
-using PixelPainter.Rendering;
+using Sable.Rendering;
 using Raylib_cs;
 
-namespace PixelPainter.Views;
+namespace Sable.Views;
 
 /// <summary>
 /// The 3D view, rendered into its own texture. Blender controls while the mouse is over it:

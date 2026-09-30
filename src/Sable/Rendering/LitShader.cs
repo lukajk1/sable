@@ -1,7 +1,7 @@
 using System.Numerics;
 using Raylib_cs;
 
-namespace PixelPainter.Rendering;
+namespace Sable.Rendering;
 
 /// <summary>
 /// Texture x material colour with a soft directional light. <see cref="Shade"/> = 0 shows the texture exactly as

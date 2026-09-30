@@ -1,6 +1,6 @@
 using Raylib_cs;
 
-namespace PixelPainter.Paint;
+namespace Sable.Paint;
 
 /// <summary>
 /// One press-drag-release of a paint tool on one texture. Each texel keeps the strongest coverage the stroke gave

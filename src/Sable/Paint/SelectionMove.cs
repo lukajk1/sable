@@ -1,6 +1,6 @@
 using Raylib_cs;
 
-namespace PixelPainter.Paint;
+namespace Sable.Paint;
 
 /// <summary>
 /// Dragging the selected texels by whole texels. A move lifts them and leaves transparent texels behind (as in
