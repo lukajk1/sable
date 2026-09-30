@@ -11,7 +11,7 @@ internal static partial class Program
     private static int Main(string[] args)
     {
         // A WinExe has no console; when started from a terminal, print into it for the options that report.
-        if (args.Any(a => a is "--check" or "--bench" or "--selftest")) AttachConsole(AttachParentProcess);
+        if (args.Any(a => a is "--check" or "--bench" or "--selftest" or "--linktest")) AttachConsole(AttachParentProcess);
         if (args.Length > 1 && args[0] == "--check")
         {
             Model.MeshCheck.Print(Model.ModelLoader.Load(args[1], _ => { }));
@@ -36,6 +36,8 @@ internal sealed class AppOptions
     public string? ScreenshotPath { get; private set; }
     public string? SelectPart { get; private set; }
     public bool SelfTest { get; private set; }
+    /// <summary>With a link: paint, bump its revision, and check the paint survives the update.</summary>
+    public bool LinkTest { get; private set; }
     /// <summary>Time scripted strokes on the largest textured object, print the results and quit.</summary>
     public bool Bench { get; private set; }
     /// <summary>Starting texture view for the 3D view: 0 pixel, 1 smooth, 2 smooth + mipmaps.</summary>
@@ -52,6 +54,8 @@ internal sealed class AppOptions
             {
                 case "--screenshot" when i + 1 < args.Length: options.ScreenshotPath = Path.GetFullPath(args[++i]); break;
                 case "--select" when i + 1 < args.Length: options.SelectPart = args[++i]; break;
+                case "--link" when i + 1 < args.Length: options.ModelPath = args[++i]; break;
+                case "--linktest": options.LinkTest = true; break;
                 case "--selftest": options.SelfTest = true; break;
                 case "--bench": options.Bench = true; break;
                 case "--frames" when i + 1 < args.Length: options.QuitAfterFrames = int.TryParse(args[++i], out int f) ? f : 0; break;

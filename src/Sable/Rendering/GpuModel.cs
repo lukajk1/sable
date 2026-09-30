@@ -20,14 +20,41 @@ public sealed unsafe class GpuModel : IDisposable
     private readonly List<Material> materials = new();
     private readonly Mesh?[] meshes;
     private readonly List<EdgeList> edges = new();
+    /// <summary>Set when a newer model took over the textures, so disposing this one leaves them alone.</summary>
+    private bool texturesHandedOver;
 
-    public GpuModel(LoadedModel source, Shader shader)
+    /// <param name="previous">
+    /// The model this one replaces with new geometry (a Blender link update). Its textures carry over as they are,
+    /// painting, layers and undo included: a texture from the same file (or of the same name) is kept instead of
+    /// decoding it again, a material keeps the texture Sable gave it, and textures made in Sable stay available.
+    /// </param>
+    public GpuModel(LoadedModel source, Shader shader, GpuModel? previous = null)
     {
         Source = source;
         this.shader = shader;
 
         foreach (var texture in source.Textures)
-            Textures.Add(PaintTexture.FromEncoded(texture.Name, texture.FileType, texture.Data, texture.FilePath));
+        {
+            var kept = previous?.Textures.FirstOrDefault(p => !Textures.Contains(p) && (texture.FilePath != null
+                ? string.Equals(p.FilePath, texture.FilePath, StringComparison.OrdinalIgnoreCase)
+                : p.FilePath == null && p.Name == texture.Name));
+            Textures.Add(kept ?? PaintTexture.FromEncoded(texture.Name, texture.FileType, texture.Data, texture.FilePath));
+        }
+        if (previous != null)
+        {
+            foreach (var info in source.Materials)
+            {
+                var before = previous.Source.Materials.FirstOrDefault(m => m.Name == info.Name);
+                if (before == null || before.TextureIndex < 0) continue;
+                var texture = previous.Textures[before.TextureIndex];
+                if (!Textures.Contains(texture)) Textures.Add(texture);
+                info.TextureIndex = Textures.IndexOf(texture);
+                info.Color = before.Color;
+            }
+            foreach (var texture in previous.Textures)
+                if (!Textures.Contains(texture)) Textures.Add(texture);
+            previous.texturesHandedOver = true;
+        }
 
         foreach (var info in source.Materials)
         {
@@ -212,7 +239,7 @@ public sealed unsafe class GpuModel : IDisposable
         foreach (var mesh in meshes) if (mesh is { } m) Raylib.UnloadMesh(m);
         // Not UnloadMaterial: it would also unload the shared shader and the textures, which are freed below.
         foreach (var material in materials) Raylib.MemFree(material.Maps);
-        foreach (var texture in Textures) texture.Dispose();
+        if (!texturesHandedOver) foreach (var texture in Textures) texture.Dispose();
         materials.Clear();
         Textures.Clear();
     }

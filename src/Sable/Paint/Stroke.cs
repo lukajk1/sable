@@ -187,6 +187,24 @@ public sealed class UndoStack
         bytes += step.Bytes;
     }
 
+    /// <summary>Drops the steps that match (e.g. ones tied to a model that was replaced), keeping the rest in order.</summary>
+    public void RemoveAll(Func<IUndoStep, bool> match)
+    {
+        for (var node = undo.First; node != null;)
+        {
+            var next = node.Next;
+            if (match(node.Value))
+            {
+                bytes -= node.Value.Bytes;
+                undo.Remove(node);
+            }
+            node = next;
+        }
+        var kept = redo.Where(step => !match(step)).Reverse().ToList();
+        redo.Clear();
+        foreach (var step in kept) redo.Push(step);
+    }
+
     public void Clear()
     {
         undo.Clear();

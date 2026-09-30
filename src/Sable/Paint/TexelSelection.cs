@@ -11,7 +11,7 @@ public enum SelectionOp { Replace, Add, Subtract }
 /// </summary>
 public sealed class TexelSelection
 {
-    public int Texture { get; }
+    public int Texture { get; set; }
     public int Width { get; }
     public int Height { get; }
     public bool[] Mask { get; private set; }

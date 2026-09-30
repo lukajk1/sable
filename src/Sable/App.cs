@@ -205,6 +205,7 @@ internal sealed partial class App : IDisposable
         while (!Raylib.WindowShouldClose() && !quit)
         {
             FinishLoad();
+            UpdateLink();
             HandleDroppedFiles();
             profiler.Mark("load");
 
@@ -434,7 +435,7 @@ internal sealed partial class App : IDisposable
         var s = Model.Source;
         SetStatus($"Opened {s.Name}: {s.Objects.Count} objects, {s.Parts.Sum(p => p.TriangleCount)} tris, {s.Textures.Count} textures"
                   + (s.Warnings.Count > 0 ? $", {s.Warnings.Count} warnings" : ""), error: false);
-        LoadLayers();
+        LoadLayers(Model!.Textures);
         if (options.Bench) benchStep = 0;
         else if (options.SelfTest) selfTestStep = 0;
         else if (options.ScreenshotPath != null) screenshotFrames = 4;
@@ -558,7 +559,9 @@ internal sealed partial class App : IDisposable
 
     private void Reload()
     {
-        if (Model != null) StartLoad(Model.Source.SourcePath);
+        if (Model == null) return;
+        if (Model.Source.LinkPath != null) StartLinkRefresh(force: true);
+        else StartLoad(Model.Source.SourcePath);
     }
 
     /// <summary>
@@ -2333,7 +2336,7 @@ internal sealed partial class App : IDisposable
     /// Settings are read at start and written on close. Screenshot and self-test runs leave them alone, so they
     /// start from the defaults and don't overwrite what the user set.
     /// </summary>
-    private bool KeepsSettings => options.ScreenshotPath == null && !options.SelfTest && !options.Bench;
+    private bool KeepsSettings => options.ScreenshotPath == null && !options.SelfTest && !options.Bench && !options.LinkTest;
 
     private void ApplySettings()
     {

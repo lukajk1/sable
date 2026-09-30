@@ -8,6 +8,10 @@ public sealed class LoadedModel
     public required string SourcePath { get; init; }
     /// <summary>The file Assimp actually read (a temporary .glb for .blend sources).</summary>
     public required string ImportedPath { get; init; }
+    /// <summary>The Blender link file this came from (see <see cref="BlenderLink"/>), or null.</summary>
+    public string? LinkPath { get; init; }
+    /// <summary>The link revision loaded, when linked.</summary>
+    public int LinkRevision { get; init; }
     public List<SceneObject> Objects { get; } = new();
     public List<MeshPart> Parts { get; } = new();
     public List<MaterialInfo> Materials { get; } = new();
@@ -16,7 +20,7 @@ public sealed class LoadedModel
     public Vector3 Min { get; set; }
     public Vector3 Max { get; set; }
 
-    public string Name => Path.GetFileName(SourcePath);
+    public string Name => LinkPath != null ? $"{Path.GetFileName(SourcePath)} (linked from Blender)" : Path.GetFileName(SourcePath);
 }
 
 /// <summary>An object as it was in Blender: one node, drawn as one part per material slot.</summary>

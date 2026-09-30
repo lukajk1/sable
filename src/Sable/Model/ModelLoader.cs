@@ -12,15 +12,33 @@ public static class ModelLoader
     public static readonly string[] Extensions = { ".fbx", ".gltf", ".glb", ".obj", ".dae", ".3ds", ".ply", ".blend" };
 
     public static bool IsSupported(string path) =>
-        Extensions.Contains(Path.GetExtension(path).ToLowerInvariant());
+        Extensions.Contains(Path.GetExtension(path).ToLowerInvariant()) || BlenderLink.IsLinkFile(path);
 
     public static LoadedModel Load(string path, Action<string> report)
     {
         string source = Path.GetFullPath(path);
         var blendImages = new Dictionary<string, string>();
-        string import = Path.GetExtension(source).Equals(".blend", StringComparison.OrdinalIgnoreCase)
-            ? BlendConverter.Convert(source, report, out blendImages)
-            : source;
+        string? linkPath = null;
+        int linkRevision = 0;
+        string import;
+        if (BlenderLink.IsLinkFile(source))
+        {
+            // Live-linked from Blender: the add-on exported the objects and says which image each material paints.
+            var link = BlenderLink.TryRead(source) ?? throw new InvalidOperationException("The Blender link file is missing or unreadable.");
+            linkPath = source;
+            linkRevision = link.Revision;
+            import = Path.Combine(Path.GetDirectoryName(source)!, link.Model);
+            foreach (var (material, file) in link.Images)
+                if (File.Exists(file)) blendImages[material] = Path.GetFullPath(file);
+            // New textures save beside the .blend; an unsaved .blend has only the link folder.
+            source = link.Blend.Length > 0 ? Path.GetFullPath(link.Blend) : Path.Combine(Path.GetDirectoryName(source)!, "untitled.blend");
+        }
+        else
+        {
+            import = Path.GetExtension(source).Equals(".blend", StringComparison.OrdinalIgnoreCase)
+                ? BlendConverter.Convert(source, report, out blendImages)
+                : source;
+        }
 
         report("Importing...");
         using var context = new AssimpContext();
@@ -33,7 +51,7 @@ public static class ModelLoader
         Scene scene = context.ImportFile(import, steps)
                       ?? throw new InvalidOperationException("Assimp returned no scene.");
 
-        var model = new LoadedModel { SourcePath = source, ImportedPath = import };
+        var model = new LoadedModel { SourcePath = source, ImportedPath = import, LinkPath = linkPath, LinkRevision = linkRevision };
         var textureLookup = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var textures = new TextureContext(scene, Path.GetDirectoryName(source)!, model, textureLookup, blendImages);
 
@@ -149,6 +167,11 @@ public static class ModelLoader
             material.GetMaterialTexture(TextureType.BaseColor, 0, out slot))
         {
             textureIndex = FindTexture(slot.FilePath, material.Name, context);
+        }
+        else if (context.BlendImages.TryGetValue(material.Name ?? "", out string? image))
+        {
+            // A Blender link exports no images, only which file each material reads.
+            textureIndex = FindTexture(image, material.Name!, context);
         }
 
         return new MaterialInfo

@@ -119,12 +119,12 @@ internal sealed partial class App
     }
 
     /// <summary>Brings back each texture's saved layers (the hidden .sable file beside its image).</summary>
-    private void LoadLayers()
+    private void LoadLayers(IEnumerable<PaintTexture> textures)
     {
         if (Model == null) return;
         var notes = new List<string>();
         int restored = 0;
-        foreach (var texture in Model.Textures)
+        foreach (var texture in textures)
         {
             if (texture.FilePath is not { } path) continue;
             if (LayerFile.TryLoad(texture, path, out string? note)) restored++;
