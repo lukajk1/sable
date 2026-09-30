@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <!-- A window, not a console app: no console opens beside it. Program attaches to the parent terminal for the
+         options that print (check, bench, selftest). -->
+    <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -9,6 +11,10 @@
     <RootNamespace>Sable</RootNamespace>
     <AssemblyName>Sable</AssemblyName>
     <ApplicationIcon>..\..\assets\icon\sable.ico</ApplicationIcon>
+    <!-- The installer (installer/build.py) takes its version from here. -->
+    <Version>0.1.0</Version>
+    <Product>Sable</Product>
+    <Description>Paint textures on 3D models</Description>
   </PropertyGroup>
 
   <ItemGroup>

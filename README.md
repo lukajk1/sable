@@ -13,6 +13,23 @@ dotnet run -- path/to/model.fbx
 
 Open a model by dropping it on the window, with File > Open (Ctrl+O) or File > Open path, or on the command line. Sable reads FBX, glTF/GLB, OBJ, DAE, 3DS and PLY through Assimp. It opens `.blend` files the way Unity does, by running Blender in the background to export a temporary GLB. It uses the newest install under `Program Files/Blender Foundation`; set `SABLE_BLENDER` to use a different `blender.exe`. Ctrl+R reloads the model from disk.
 
+## Installer
+
+```bash
+python installer/build.py
+```
+
+This publishes Sable self-contained for 64-bit Windows (the .NET runtime is bundled, so nothing else needs installing) into `installer/publish`, then compiles `installer/sable.iss` with Inno Setup 6 into `installer/output/SableSetup-<version>.exe` (about 30 MB). The version is `<Version>` in `src/Sable/Sable.csproj`. `--no-setup` stops after publishing.
+
+The installer:
+- Installs for the current user by default (no admin prompt, into `%LOCALAPPDATA%\Programs\Sable`), or for everyone if chosen.
+- Adds a Start menu entry, optionally a desktop shortcut, and optionally Sable under "Open with" for model files, without changing what they open with by default.
+- Asks to close a running Sable before updating it, and uninstalls from Windows' Apps list.
+
+Settings stay in `%APPDATA%\Sable`, and `.blend` files still need Blender installed.
+
+For a scripted install: `SableSetup-<version>.exe /VERYSILENT /CURRENTUSER`. From Git Bash, prefix it with `MSYS_NO_PATHCONV=1`, or Bash turns the `/` switches into paths and the wizard opens instead.
+
 ## The window
 
 - **Panel (left):** tools, colour, brush settings, display options, the object list, the active object's materials and textures, textures and warnings.
@@ -189,6 +206,7 @@ Environment: `SABLE_BLENDER` (the Blender to use), `SABLE_SETTINGS` (a different
 - `Input/`: pen input from Windows Ink (`PenInput`).
 - `Diagnostics/`: the frame profiler behind the hitch log, and the `--bench` table.
 - `assets/icon/`: the app icon (`sable.svg`, PNG sizes, `sable.ico`).
+- `installer/`: the Inno Setup script (`sable.iss`) and `build.py`.
 - `App.cs`: the window, tools, selection and panels. `App.Layers.cs`: the Layers window, the New texture dialog and the layer keys. `EditorState.cs`: what's selected and shown. `Settings.cs`: what persists. `Program.cs`: the command line.
 
 Built with .NET 9, [Raylib-cs](https://github.com/ChrisDill/Raylib-cs), [ImGui.NET](https://github.com/ImGuiNET/ImGui.NET) via [rlImGui-cs](https://github.com/raylib-extras/rlImGui-cs), and [AssimpNet](https://bitbucket.org/Starnick/assimpnet).

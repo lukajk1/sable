@@ -1,9 +1,17 @@
 namespace Sable;
 
-internal static class Program
+internal static partial class Program
 {
+    private const int AttachParentProcess = -1;
+
+    [System.Runtime.InteropServices.LibraryImport("kernel32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static partial bool AttachConsole(int processId);
+
     private static int Main(string[] args)
     {
+        // A WinExe has no console; when started from a terminal, print into it for the options that report.
+        if (args.Any(a => a is "--check" or "--bench" or "--selftest")) AttachConsole(AttachParentProcess);
         if (args.Length > 1 && args[0] == "--check")
         {
             Model.MeshCheck.Print(Model.ModelLoader.Load(args[1], _ => { }));

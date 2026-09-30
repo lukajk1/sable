@@ -193,6 +193,8 @@ internal sealed partial class App : IDisposable
         ApplySettings();
         Raylib.SetExitKey(KeyboardKey.Null);
         rlImGui.Setup(true);
+        // No imgui.ini: Sable keeps its own settings, and the install folder may not be writable.
+        unsafe { ImGui.GetIO().NativePtr->IniFilename = null; }
         shader = new LitShader();
         // Keeps the garbage collector from stopping everything for a full collection mid-stroke.
         System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;

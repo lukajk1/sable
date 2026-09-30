@@ -4,3 +4,5 @@ obj/
 *.user
 .scratch/
 imgui.ini
+installer/publish/
+installer/output/
