@@ -1,5 +1,6 @@
 using System.Numerics;
 using ImGuiNET;
+using Sable.Input;
 using Sable.Model;
 using Sable.Paint;
 using Sable.Rendering;
@@ -35,6 +36,13 @@ internal sealed class App : IDisposable
     private float brushSize = 8f;
     private float hardness = 0.5f;
     private float opacity = 1f;
+    private float flow = 1f;
+    // Pen pressure (Windows Ink): drives flow and optionally size, through a gamma curve.
+    private bool pressureToFlow = true;
+    private bool pressureToSize;
+    private float pressureCurve = 1.6f;
+    private float lastPressure = 1f;
+    private float dabSize = 8f;
     private Vector3 hsv = new(0.07f, 0.75f, 0.9f);
     private Vector3 hsvAtPickerOpen;
     private bool openPicker, closePicker, pickerOpen;
@@ -89,21 +97,38 @@ internal sealed class App : IDisposable
         }
     }
 
-    /// <summary>The pencil is always fully opaque; the brush uses the opacity slider.</summary>
-    private Color StrokeColor
+    /// <summary>A stroke on a texture: the pencil always at full opacity, the brush at the opacity slider.</summary>
+    private Stroke NewStroke(int texture) =>
+        new(Model!.Textures[texture], PaintColor, tool == Tool.Brush ? opacity : 1f, MaskFor(texture));
+
+    /// <summary>Pen pressure 0..1 while the pen is drawing; 1 with the mouse.</summary>
+    private static float RawPressure =>
+        PenInput.PenDetected && Environment.TickCount64 - PenInput.LastPenTime < 300
+            ? (PenInput.InContact ? PenInput.Pressure : 0f)
+            : 1f;
+
+    /// <summary>
+    /// Sets flow and size for the next dab from pressure through the curve (gamma above 1 spends more of the pen's
+    /// range on light pressure). The pencil ignores pressure.
+    /// </summary>
+    private void SetDab(float pressure)
     {
-        get
+        if (stroke == null) return;
+        if (tool != Tool.Brush)
         {
-            var c = PaintColor;
-            if (tool == Tool.Brush) c.A = (byte)MathF.Round(Math.Clamp(opacity, 0f, 1f) * 255f);
-            return c;
+            stroke.Flow = 1f;
+            return;
         }
+        float p = MathF.Pow(Math.Clamp(pressure, 0f, 1f), pressureCurve);
+        stroke.Flow = flow * (pressureToFlow ? p : 1f);
+        dabSize = pressureToSize ? MathF.Max(1f, brushSize * (0.15f + 0.85f * p)) : brushSize;
     }
 
     public void Run()
     {
         Raylib.SetConfigFlags(ConfigFlags.ResizableWindow | ConfigFlags.Msaa4xHint | ConfigFlags.VSyncHint);
         Raylib.InitWindow(1600, 900, "Sable");
+        unsafe { PenInput.Attach((IntPtr)Raylib.GetWindowHandle()); }
         Raylib.SetWindowMinSize(900, 560);
         Raylib.SetExitKey(KeyboardKey.Null);
         rlImGui.Setup(true);
@@ -796,7 +821,9 @@ internal sealed class App : IDisposable
         state.ActiveTexture = texture;
         strokeTexture = texture;
         strokeIn3D = true;
-        stroke = new Stroke(Model.Textures[texture], StrokeColor, MaskFor(texture));
+        stroke = NewStroke(texture);
+        lastPressure = RawPressure;
+        SetDab(lastPressure);
         Dab3D(hit);
         lastMouse = view3d.LocalMouse;
     }
@@ -809,8 +836,10 @@ internal sealed class App : IDisposable
         if (distance < spacing) return;
         int steps = (int)(distance / spacing);
         var camera = view3d.Camera.ToRaylib();
+        float pressure = RawPressure;
         for (int s = 1; s <= steps; s++)
         {
+            SetDab(float.Lerp(lastPressure, pressure, s / (float)steps));
             Vector2 p = Vector2.Lerp(lastMouse, to, s / (float)steps);
             var ray = Raylib.GetScreenToWorldRayEx(p, camera, view3d.Width, view3d.Height);
             if (Raycast.Cast(Model!.Source, ray.Position, ray.Direction, i => i == state.ActiveObject && state.ObjectVisible(i), out var hit)
@@ -818,6 +847,7 @@ internal sealed class App : IDisposable
                 Dab3D(hit);
         }
         lastMouse = to;
+        lastPressure = pressure;
     }
 
     private void Dab3D(SurfaceHit hit)
@@ -830,7 +860,7 @@ internal sealed class App : IDisposable
         }
         else
         {
-            Brush.DabSurface(stroke!, Model!.Source, state.ActiveObject, strokeTexture, hit, brushSize, hardness, Model.TextureOf);
+            Brush.DabSurface(stroke!, Model!.Source, state.ActiveObject, strokeTexture, hit, dabSize, hardness, Model.TextureOf);
         }
     }
 
@@ -838,7 +868,9 @@ internal sealed class App : IDisposable
     {
         strokeTexture = state.ActiveTexture;
         strokeIn3D = false;
-        stroke = new Stroke(Model!.Textures[strokeTexture], StrokeColor, MaskFor(strokeTexture));
+        stroke = NewStroke(strokeTexture);
+        lastPressure = RawPressure;
+        SetDab(lastPressure);
         if (tool == Tool.Pencil)
         {
             lastTexel = ((int)MathF.Floor(uvView.MouseTexel.X), (int)MathF.Floor(uvView.MouseTexel.Y));
@@ -846,8 +878,8 @@ internal sealed class App : IDisposable
         }
         else
         {
-            lastDab = Brush.SnapCenter(uvView.MouseTexel, brushSize);
-            Brush.DabTexels(stroke, lastDab, brushSize, hardness);
+            lastDab = Brush.SnapCenter(uvView.MouseTexel, dabSize);
+            Brush.DabTexels(stroke, lastDab, dabSize, hardness);
         }
     }
 
@@ -866,9 +898,14 @@ internal sealed class App : IDisposable
         float distance = Vector2.Distance(lastDab, center);
         if (distance < spacing) return;
         int steps = (int)MathF.Ceiling(distance / spacing);
+        float pressure = RawPressure;
         for (int s = 1; s <= steps; s++)
-            Brush.DabTexels(stroke!, Brush.SnapCenter(Vector2.Lerp(lastDab, center, s / (float)steps), brushSize), brushSize, hardness);
+        {
+            SetDab(float.Lerp(lastPressure, pressure, s / (float)steps));
+            Brush.DabTexels(stroke!, Brush.SnapCenter(Vector2.Lerp(lastDab, center, s / (float)steps), dabSize), dabSize, hardness);
+        }
         lastDab = center;
+        lastPressure = pressure;
     }
 
     private void EndStroke()
@@ -1140,10 +1177,39 @@ internal sealed class App : IDisposable
         brushSize = MathF.Max(1f, MathF.Round(brushSize));
         ImGui.SetNextItemWidth(150);
         ImGui.SliderFloat("Hardness", ref hardness, 0f, 1f, "%.2f");
+        // Percent sliders on a log scale: most of their travel goes to the low values that washes need.
+        float opacityPercent = opacity * 100f, flowPercent = flow * 100f;
         ImGui.SetNextItemWidth(150);
-        ImGui.SliderFloat("Opacity (brush)", ref opacity, 0.02f, 1f, "%.2f");
+        if (ImGui.SliderFloat("Opacity (brush)", ref opacityPercent, 1f, 100f, "%.0f%%", ImGuiSliderFlags.Logarithmic)) opacity = opacityPercent / 100f;
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("The most one stroke can reach.");
+        ImGui.SetNextItemWidth(150);
+        if (ImGui.SliderFloat("Flow", ref flowPercent, 1f, 100f, "%.0f%%", ImGuiSliderFlags.Logarithmic)) flow = flowPercent / 100f;
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("How much each dab adds. Low flow builds up as you go over a spot, up to the opacity.");
+        DrawPressureSection();
         ImGui.SetNextItemWidth(150);
         ImGui.SliderFloat("Lighting", ref view3d.Shade, 0f, 1f, view3d.Shade <= 0 ? "flat" : "%.2f");
+    }
+
+    private void DrawPressureSection()
+    {
+        ImGui.Checkbox("Pressure: flow", ref pressureToFlow);
+        ImGui.SameLine();
+        ImGui.Checkbox("size", ref pressureToSize);
+        ImGui.SetNextItemWidth(150);
+        ImGui.SliderFloat("Pressure curve", ref pressureCurve, 0.4f, 3f, pressureCurve >= 1f ? "%.2f (soft)" : "%.2f (firm)");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Above 1: more of the pen's range goes to light pressure, for washes; full pressure still reaches full.\nBelow 1: reaches full strength sooner.");
+        if (PenInput.PenDetected)
+        {
+            float shown = PenInput.InContact ? MathF.Pow(PenInput.Pressure, pressureCurve) : 0f;
+            ImGui.ProgressBar(shown, new Vector2(150, 0), $"pen {PenInput.Pressure:0.00}");
+        }
+        else
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);
+            ImGui.TextWrapped("No pen seen yet. Wacom: tick \"Use Windows Ink\" in Wacom Tablet Properties.");
+            ImGui.PopStyleColor();
+        }
     }
 
     private void DrawActiveObject()
@@ -1313,7 +1379,7 @@ internal sealed class App : IDisposable
                     move.MoveTo(0, 0, selection);
                     move.MoveTo(12, 0, selection);
                     if (move.Finish() is { } moveStep) undo.Push(moveStep);
-                    stroke = new Stroke(tex, new Color(255, 255, 0, 255), MaskFor(state.ActiveTexture));
+                    stroke = new Stroke(tex, new Color(255, 255, 0, 255), mask: MaskFor(state.ActiveTexture));
                     Brush.DabTexels(stroke, new Vector2(24, 38), 30, 1f);
                     EndStroke();
                     int yellowOutside = 0;
@@ -1330,6 +1396,19 @@ internal sealed class App : IDisposable
                     Brush.DabTexels(probeStroke, Brush.SnapCenter(new Vector2(4.2f, 4.2f), testSize), testSize, 0.5f);
                     var rows = Enumerable.Range(3, 3).Select(y => string.Join(" ", Enumerable.Range(3, 3).Select(x => probe.Get(x, y).R.ToString().PadLeft(3))));
                     Console.WriteLine($"[selftest] size {testSize} soft dab, grey 0-255 around the centre: {string.Join(" | ", rows)}");
+                }
+
+                // Flow builds up over repeated dabs within a stroke, capped by the stroke's opacity.
+                {
+                    using var probe = PaintTexture.Create("probe", 8, 8, new Color(0, 0, 0, 255));
+                    var probeStroke = new Stroke(probe, new Color(255, 255, 255, 255), opacity: 0.6f) { Flow = 0.25f };
+                    var levels = new List<int>();
+                    for (int dab = 0; dab < 8; dab++)
+                    {
+                        Brush.DabTexels(probeStroke, new Vector2(4.5f, 4.5f), 3, 1f);
+                        levels.Add(probe.Get(4, 4).R);
+                    }
+                    Console.WriteLine($"[selftest] flow 25% opacity 60%, centre after each dab: {string.Join(", ", levels)} (cap {0.6f * 255:0})");
                 }
 
                 tool = Tool.Brush;
@@ -1374,6 +1453,7 @@ internal sealed class App : IDisposable
         shader?.Dispose();
         if (Raylib.IsWindowReady())
         {
+            PenInput.Detach();
             rlImGui.Shutdown();
             Raylib.CloseWindow();
         }

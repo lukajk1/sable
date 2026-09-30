@@ -14,12 +14,19 @@ public enum Tool { Select, Pencil, Brush, Eyedropper, Lasso }
 /// </summary>
 public static class Brush
 {
+    private static readonly float FalloffFloor = MathF.Exp(-4.5f);
+
+    /// <summary>
+    /// Brush shape at distance <paramref name="t"/> (0 centre, 1 rim): solid out to <paramref name="hardness"/>,
+    /// then a Gaussian-like fade that drops quickly and trails off thin, so a soft brush has a real core and
+    /// feathered edges rather than a wide band of mid values.
+    /// </summary>
     public static float Falloff(float t, float hardness)
     {
         if (t > 1f) return 0f;
         if (t <= hardness || hardness >= 1f) return 1f;
         float x = (t - hardness) / (1f - hardness);
-        return 1f - x * x * (3f - 2f * x);
+        return (MathF.Exp(-4.5f * x * x) - FalloffFloor) / (1f - FalloffFloor);
     }
 
     /// <summary>

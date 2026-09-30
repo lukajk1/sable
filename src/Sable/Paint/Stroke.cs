@@ -3,41 +3,51 @@ using Raylib_cs;
 namespace Sable.Paint;
 
 /// <summary>
-/// One press-drag-release of a paint tool on one texture. Each texel keeps the strongest coverage the stroke gave
-/// it and is blended from its pre-stroke colour, so a soft brush doesn't build up where dabs overlap.
+/// One press-drag-release of a paint tool on one texture, composited the way Photoshop and Krita do it. Each dab
+/// builds up a texel's stroke coverage by <see cref="Flow"/> times the brush shape (so going over a spot again
+/// within the stroke deepens it), and the stroke is laid over the pre-stroke texture at <c>opacity</c>, which is
+/// therefore the most a single stroke can reach.
 /// </summary>
 public sealed class Stroke
 {
     public PaintTexture Texture { get; }
+    /// <summary>How much each dab adds, 0..1 (set per dab, e.g. from pen pressure).</summary>
+    public float Flow { get; set; } = 1f;
     private readonly Color[] before;
     private readonly float[] coverage;
     private readonly Color color;
+    private readonly float opacity;
     private readonly bool[]? mask;
     private int minX = int.MaxValue, minY = int.MaxValue, maxX = -1, maxY = -1;
 
+    /// <param name="opacity">The ceiling for this stroke, 0..1.</param>
     /// <param name="mask">When given, only these texels can be painted (the lasso selection).</param>
-    public Stroke(PaintTexture texture, Color color, bool[]? mask = null)
+    public Stroke(PaintTexture texture, Color color, float opacity = 1f, bool[]? mask = null)
     {
         Texture = texture;
-        this.color = color;
+        this.color = color with { A = 255 };
+        this.opacity = Math.Clamp(opacity, 0f, 1f);
         this.mask = mask;
         before = (Color[])texture.Pixels.Clone();
         coverage = new float[texture.Width * texture.Height];
     }
 
-    /// <summary>Paints texel (x, y) (wrapped into the texture) with coverage 0..1.</summary>
-    public void Apply(int x, int y, float alpha)
+    /// <summary>Adds one dab's share <paramref name="shape"/> (0..1) to texel (x, y), wrapped into the texture.</summary>
+    public void Apply(int x, int y, float shape)
     {
-        if (alpha <= 0) return;
+        float add = shape * Flow;
+        if (add <= 0) return;
         x = Texture.Wrap(x, Texture.Width);
         y = Texture.Wrap(y, Texture.Height);
         int i = y * Texture.Width + x;
         if (mask != null && !mask[i]) return;
-        if (alpha <= coverage[i]) return;
-        coverage[i] = alpha;
+        float previous = coverage[i];
+        float next = add >= 1f ? 1f : previous + (1f - previous) * add;
+        if (next - previous < 1e-5f) return;
+        coverage[i] = next;
 
         Color from = before[i];
-        float a = alpha * (color.A / 255f);
+        float a = next * opacity;
         Texture.Pixels[i] = a >= 0.999f
             ? color
             : new Color(Lerp(from.R, color.R, a), Lerp(from.G, color.G, a), Lerp(from.B, color.B, a),

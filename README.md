@@ -52,7 +52,7 @@ Painting goes to the active object only, in either view:
 | --- | --- |
 | V | Select tool |
 | N | Pencil: exactly one texel, fully opaque |
-| B | Brush: round and soft, sized in texels, with hardness (edge) and opacity sliders. Each texel takes the share of it the brush covers, so even a 1-2 texel brush blends partial colour |
+| B | Brush: round and soft, sized in texels, with Hardness (a solid core out to this share of the radius, then a thin feathered edge), Opacity and Flow. Each texel takes the share of it the brush covers, so even a 1-2 texel brush blends partial colour |
 | I | Eyedropper: the unlit texel colour (the material colour where there's no texture) |
 | Hold Alt | Eyedropper from any tool: hover a colour and let go of Alt to take it (no click). Its cursor shows a loupe of the texels around the one under it, with the sampled and current colours side by side |
 | X | Lasso (UV view): drag to select texels, Shift adds, Ctrl subtracts; drag inside the selection to move those texels (leaves them transparent), Ctrl+drag to move a copy; click outside, Ctrl+D or Esc to deselect. Painting stays inside the selection |
@@ -60,6 +60,10 @@ Painting goes to the active object only, in either view:
 | D | Colour picker (hue ring around a saturation/value square) at the cursor; D or Esc closes it |
 | Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y | Undo, redo (per stroke) |
 | Ctrl+S | Save changed textures |
+
+Opacity and Flow work as in Photoshop and Krita. Flow is how much each dab adds, so with low flow going over a spot again within a stroke deepens it; Opacity is the ceiling one stroke can reach. Both sliders are on a log scale, so most of their travel is in the low range.
+
+With a Wacom (or any Windows Ink pen), pressure drives flow, and optionally size, through the pressure curve: above 1 spends more of the pen's range on light pressure, for washes, and full pressure still reaches full. The pencil ignores pressure and is always opaque. The Wacom driver's "Use Windows Ink" setting has to be on; the panel shows a live pressure bar once the pen is seen.
 
 On the model the brush paints every texel whose point on the surface falls inside the brush, so strokes carry across UV seams; it only paints faces turned the same way as the one under the cursor. Objects with UVs but no texture get a **New texture** button in the panel, filled with the material colour.
 
@@ -74,6 +78,7 @@ Ctrl+R reloads the model from disk.
 - `Rendering/`: the raylib side (`GpuModel`, `LitShader`).
 - `Views/`: the 3D view with its camera, and the UV view.
 - `UI/`: the colour wheel.
+- `Input/`: pen pressure from Windows Ink (`PenInput`).
 - `App.cs`: the window, tools, selection and panels; `EditorState.cs`: what's selected and shown.
 
 Built with .NET 9, [Raylib-cs](https://github.com/ChrisDill/Raylib-cs), [ImGui.NET](https://github.com/ImGuiNET/ImGui.NET) via [rlImGui-cs](https://github.com/raylib-extras/rlImGui-cs), and [AssimpNet](https://bitbucket.org/Starnick/assimpnet).
