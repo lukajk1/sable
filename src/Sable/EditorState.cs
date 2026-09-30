@@ -26,7 +26,8 @@ public sealed class EditorState
 
     /// <summary>The selection, if it is on the texture the UV view shows and has any texels.</summary>
     public Paint.TexelSelection? ActiveSelection =>
-        Selection is { Any: true } s && s.Texture == ActiveTexture ? s : null;
+        Selection is { Any: true } s && s.Texture == ActiveTexture && Model != null && ActiveTexture < Model.Textures.Count
+        && s.Width == Model.Textures[ActiveTexture].Width && s.Height == Model.Textures[ActiveTexture].Height ? s : null;
 
     public bool ObjectVisible(int index) =>
         Model != null && !Model.Source.Objects[index].Hidden && (Isolated == null || Isolated == index);

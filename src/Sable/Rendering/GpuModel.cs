@@ -195,6 +195,12 @@ public sealed unsafe class GpuModel : IDisposable
     public void UploadTextures()
     {
         foreach (var texture in Textures) texture.Upload();
+        // A resized texture (or its undo) has a new GPU texture: point its materials at it.
+        for (int m = 0; m < materials.Count; m++)
+        {
+            int index = Source.Materials[m].TextureIndex;
+            if (index >= 0 && materials[m].Maps[(int)MaterialMapIndex.Albedo].Texture.Id != Textures[index].Gpu.Id) ApplyMaterial(m);
+        }
     }
 
     public static Color ToColor(Vector4 c) => new(

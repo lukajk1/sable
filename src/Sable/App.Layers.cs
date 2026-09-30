@@ -489,7 +489,130 @@ internal sealed partial class App
         SetStatus($"Created {name} ({newTextureSize}x{newTextureSize}) on {on}; Ctrl+S saves it to {DefaultSavePath(name)}", error: false);
     }
 
+    // ---------- Resize texture ----------
+
+    private bool openResize;
+    private int resizeWidth, resizeHeight;
+    private bool resizeKeepRatio = true, resizeSmooth;
+
+    private void OpenResize()
+    {
+        if (ActiveTextureObject is not { } texture) return;
+        (resizeWidth, resizeHeight) = (texture.Width, texture.Height);
+        openResize = true;
+    }
+
+    private void DrawResizePopup()
+    {
+        if (openResize)
+        {
+            ImGui.OpenPopup("Resize texture");
+            openResize = false;
+        }
+        ImGui.SetNextWindowPos(new Vector2(uvRect.X + uvRect.Width * 0.5f, uvRect.Y + uvRect.Height * 0.4f), ImGuiCond.Appearing, new Vector2(0.5f, 0.5f));
+        if (!ImGui.BeginPopupModal("Resize texture", ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings)) return;
+        if (ActiveTextureObject is not { } texture)
+        {
+            ImGui.CloseCurrentPopup();
+            ImGui.EndPopup();
+            return;
+        }
+
+        ImGui.TextUnformatted($"{texture.Name}: {texture.Width} x {texture.Height}, {texture.Layers.Count} layer{(texture.Layers.Count == 1 ? "" : "s")}");
+        float ratio = texture.Height / (float)texture.Width;
+        int width = resizeWidth, height = resizeHeight;
+        ImGui.SetNextItemWidth(140);
+        if (ImGui.InputInt("Width", ref width, 4, 64))
+        {
+            resizeWidth = width;
+            if (resizeKeepRatio) resizeHeight = ValidTextureSize((int)MathF.Round(width * ratio));
+        }
+        if (!ImGui.IsItemActive()) resizeWidth = ValidTextureSize(resizeWidth);
+        ImGui.SetNextItemWidth(140);
+        if (ImGui.InputInt("Height", ref height, 4, 64))
+        {
+            resizeHeight = height;
+            if (resizeKeepRatio) resizeWidth = ValidTextureSize((int)MathF.Round(height / ratio));
+        }
+        if (!ImGui.IsItemActive()) resizeHeight = ValidTextureSize(resizeHeight);
+        ImGui.Checkbox("Keep proportions", ref resizeKeepRatio);
+
+        void Scale(string label, float factor)
+        {
+            if (ImGui.Button(label))
+                (resizeWidth, resizeHeight) = (ValidTextureSize((int)MathF.Round(texture.Width * factor)), ValidTextureSize((int)MathF.Round(texture.Height * factor)));
+            ImGui.SameLine();
+        }
+        Scale("1/4", 0.25f);
+        Scale("1/2", 0.5f);
+        Scale("2x", 2f);
+        Scale("4x", 4f);
+        ImGui.NewLine();
+
+        int mode = resizeSmooth ? 1 : 0;
+        ImGui.SetNextItemWidth(220);
+        if (ImGui.Combo("Resampling", ref mode, new[] { "Nearest (hard pixels)", "Smooth" }, 2)) resizeSmooth = mode == 1;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Nearest keeps texels hard-edged: best for pixel art, and exact for 2x / 1/2.\nSmooth blends: better for painted textures, especially when shrinking.");
+        ImGui.TextDisabled("All layers are resized. Ctrl+Z undoes it.");
+
+        bool same = resizeWidth == texture.Width && resizeHeight == texture.Height;
+        ImGui.BeginDisabled(same);
+        if (ImGui.Button("Resize", new Vector2(100, 0)) || (!same && ImGui.IsKeyPressed(ImGuiKey.Enter)))
+        {
+            ResizeActiveTexture(ValidTextureSize(resizeWidth), ValidTextureSize(resizeHeight), resizeSmooth);
+            ImGui.CloseCurrentPopup();
+        }
+        ImGui.EndDisabled();
+        ImGui.SameLine();
+        if (ImGui.Button("Cancel", new Vector2(100, 0)) || ImGui.IsKeyPressed(ImGuiKey.Escape)) ImGui.CloseCurrentPopup();
+        ImGui.EndPopup();
+    }
+
+    private void ResizeActiveTexture(int width, int height, bool smooth)
+    {
+        if (ActiveTextureObject is not { } texture) return;
+        EndStroke();
+        int oldWidth = texture.Width, oldHeight = texture.Height;
+        undo.Push(texture.Resize(width, height, smooth));
+        uvView.RequestFit();
+        SetStatus($"Resized {texture.Name} from {oldWidth}x{oldHeight} to {width}x{height} ({(smooth ? "smooth" : "nearest")}); Ctrl+Z undoes it.", error: false);
+    }
+
     // ---------- self-test ----------
+
+    /// <summary>Resize: nearest 2x keeps texels exact, a stroke after it and the resize both undo, redo comes back.</summary>
+    private void SelfTestResize(PaintTexture tex)
+    {
+        tex.EnsureComposite();
+        var original = (Color[])tex.Composite.Clone();
+        int w = tex.Width, h = tex.Height, layers = tex.Layers.Count;
+        ResizeActiveTexture(w * 2, h * 2, smooth: false);
+        tex.EnsureComposite();
+        bool exact = true;
+        for (int y = 0; y < h && exact; y++)
+        for (int x = 0; x < w && exact; x++)
+            exact = tex.Composite[(y * 2 + 1) * tex.Width + x * 2 + 1].Equals(original[y * w + x]) || original[y * w + x].A == 0;
+        string size2x = $"{tex.Width}x{tex.Height}, {tex.Layers.Count} layers";
+
+        var paint = new Stroke(tex, new Color(0, 255, 255, 255));
+        paint.Apply(tex.Width - 1, tex.Height - 1, 1f);
+        undo.Push(paint.Finish()!);
+        undo.Undo();
+        undo.Undo();
+        tex.EnsureComposite();
+        bool restored = tex.Width == w && tex.Height == h && tex.Composite.SequenceEqual(original) && tex.Layers.Count == layers;
+        undo.Redo();
+        string redone = $"{tex.Width}x{tex.Height}";
+        undo.Undo();
+
+        ResizeActiveTexture(w / 2, h / 2, smooth: true);
+        string half = $"{tex.Width}x{tex.Height}";
+        undo.Undo();
+        Model!.UploadTextures();
+        Console.WriteLine($"[selftest] resize: 2x nearest -> {size2x}, texels exact {exact}; stroke + resize undone -> {tex.Width}x{tex.Height} identical {restored}; "
+                          + $"redo -> {redone}; smooth 1/2 -> {half}; material follows the GPU texture {Model.Source.Materials.Any(m => m.TextureIndex == state.ActiveTexture)}");
+    }
 
     /// <summary>
     /// Layers on the active texture: paint on a new layer, blend modes and opacity, the eraser, soft paint on a

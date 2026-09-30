@@ -259,6 +259,7 @@ internal sealed partial class App : IDisposable
             DrawOpenPathPopup();
             fileBrowser.Draw(new Vector2(w, h));
             DrawNewTexturePopup();
+            DrawResizePopup();
             DrawColorPicker();
             DrawToolCursor();
             ImGui.PopItemFlag();
@@ -1153,7 +1154,8 @@ internal sealed partial class App : IDisposable
 
     /// <summary>The selection mask for strokes on <paramref name="texture"/>: paint stays inside it.</summary>
     private bool[]? MaskFor(int texture) =>
-        state.Selection is { Any: true } s && s.Texture == texture ? s.Mask : null;
+        state.Selection is { Any: true } s && s.Texture == texture
+        && s.Width == Model!.Textures[texture].Width && s.Height == Model.Textures[texture].Height ? s.Mask : null;
 
     /// <summary>Whether any visible object is under the mouse in the 3D view.</summary>
     private bool ObjectUnderMouse()
@@ -1687,6 +1689,7 @@ internal sealed partial class App : IDisposable
             ImGui.Separator();
             bool hasTexture = Model != null && state.ActiveTexture >= 0;
             if (ImGui.MenuItem("New texture...", null, false, Model != null)) OpenNewTexture();
+            if (ImGui.MenuItem("Resize texture...", null, false, hasTexture)) OpenResize();
             if (ImGui.MenuItem("Import image as layer...", null, false, hasTexture)) ImportImageAsLayer();
             if (ImGui.MenuItem("Import image into texture...", null, false, hasTexture)) ImportImage();
             if (ImGui.MenuItem("Export texture as...", null, false, hasTexture)) ExportTexture();
@@ -1975,6 +1978,11 @@ internal sealed partial class App : IDisposable
         ImGui.SameLine();
         if (ImGui.Button("New texture...")) OpenNewTexture();
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("A new image for one of the active object's materials");
+        ImGui.SameLine();
+        ImGui.BeginDisabled(ActiveTextureObject == null);
+        if (ImGui.Button("Resize...")) OpenResize();
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled)) ImGui.SetTooltip("Change the size of the texture shown here (all its layers); Ctrl+Z undoes it");
         ImGui.End();
     }
 
@@ -2281,6 +2289,7 @@ internal sealed partial class App : IDisposable
                 }
 
                 if (state.ActiveTexture >= 0) SelfTestLayers(Model.Textures[state.ActiveTexture]);
+                if (state.ActiveTexture >= 0) SelfTestResize(Model.Textures[state.ActiveTexture]);
 
                 tool = Tool.Brush;
                 Console.WriteLine($"[selftest] undo available: {undo.CanUndo}; dirty textures: {Model.Textures.Count(t => t.Dirty)}");

@@ -10,8 +10,8 @@ namespace Sable.Paint;
 public sealed unsafe class PaintTexture : IDisposable
 {
     public string Name { get; set; }
-    public int Width { get; }
-    public int Height { get; }
+    public int Width { get; private set; }
+    public int Height { get; private set; }
     /// <summary>Bottom first. Never empty.</summary>
     public List<Layer> Layers { get; } = new();
     public int ActiveLayerIndex { get; set; }
@@ -22,7 +22,7 @@ public sealed unsafe class PaintTexture : IDisposable
     /// The layers flattened: what the views show and what saving writes. Brought up to date by
     /// <see cref="EnsureComposite"/> (and every <see cref="Upload"/>).
     /// </summary>
-    public Color[] Composite { get; }
+    public Color[] Composite { get; private set; }
     public Texture2D Gpu => gpu;
     private Texture2D gpu;
     private TextureView view = TextureView.Pixel;
@@ -57,6 +57,51 @@ public sealed unsafe class PaintTexture : IDisposable
         }
         Raylib.SetTextureFilter(gpu, TextureFilter.Point);
         Raylib.SetTextureWrap(gpu, TextureWrap.Repeat);
+    }
+
+    /// <summary>
+    /// Changes the size and replaces the layers (all of that size) in one go: the resize itself and its undo. Makes a
+    /// new GPU texture; <see cref="Rendering.GpuModel"/> notices the new id and points its materials at it.
+    /// </summary>
+    public void SetContents(int width, int height, LayerState state)
+    {
+        if (width != Width || height != Height)
+        {
+            Width = width;
+            Height = height;
+            Composite = new Color[width * height];
+            strokeBefore = null;
+            strokeCoverage = null;
+            uploadScratch = null;
+            dirtyX0 = dirtyY0 = int.MaxValue;
+            dirtyX1 = dirtyY1 = -1;
+            Raylib.UnloadTexture(gpu);
+            fixed (Color* data = Composite)
+            {
+                var image = new Image { Data = data, Width = width, Height = height, Mipmaps = 1, Format = PixelFormat.UncompressedR8G8B8A8 };
+                gpu = Raylib.LoadTextureFromImage(image);
+            }
+            Raylib.SetTextureFilter(gpu, TextureFilter.Point);
+            Raylib.SetTextureWrap(gpu, TextureWrap.Repeat);
+            // The new texture starts as Pixel with no mipmaps; reapply the view the old one had.
+            var wanted = view;
+            view = TextureView.Pixel;
+            mipmapped = false;
+            SetView(wanted);
+        }
+        Restore(state);
+    }
+
+    /// <summary>Resamples every layer to a new size (nearest, or smooth), as one undo step.</summary>
+    public ResizeStep Resize(int width, int height, bool smooth)
+    {
+        var before = Snapshot();
+        int oldWidth = Width, oldHeight = Height;
+        var layers = Layers.Select(l => new Layer(l.Name, Resampler.Resample(l.Pixels, Width, Height, width, height, smooth))
+            { Visible = l.Visible, Opacity = l.Opacity, Blend = l.Blend }).ToArray();
+        var after = new LayerState(layers, before.Settings, before.Active);
+        SetContents(width, height, after);
+        return new ResizeStep(this, oldWidth, oldHeight, before, width, height, after);
     }
 
     /// <summary>
