@@ -268,6 +268,7 @@ internal sealed partial class App : IDisposable
             fileBrowser.Draw(new Vector2(w, h));
             DrawNewTexturePopup();
             DrawResizePopup();
+            DrawBleedPopup();
             DrawRecoveryPrompt();
             DrawColorPicker();
             DrawToolCursor();
@@ -1831,6 +1832,7 @@ internal sealed partial class App : IDisposable
             if (ImGui.MenuItem("New layer", "Ctrl+Shift+N", false, layers)) NewLayer();
             if (ImGui.MenuItem("Duplicate layer", "Ctrl+J", false, layers)) DuplicateLayer();
             if (ImGui.MenuItem("Merge layer down", "Ctrl+E", false, layers && ActiveTextureObject!.ActiveLayerIndex > 0)) MergeLayerDown();
+            if (ImGui.MenuItem("Bleed edges of layer...", null, false, layers)) openBleed = true;
             ImGui.EndMenu();
         }
         if (ImGui.BeginMenu("View"))

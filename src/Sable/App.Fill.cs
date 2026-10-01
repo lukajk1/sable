@@ -1,4 +1,5 @@
 using System.Numerics;
+using ImGuiNET;
 using Raylib_cs;
 using Sable.Model;
 using Sable.Paint;
@@ -69,6 +70,67 @@ internal sealed partial class App
         return EdgePadding.Pad(texture.Composite, texture.Width, texture.Height, inside, edgePadding);
     }
 
+    // ---------- bleed edges ----------
+
+    private bool openBleed;
+    private int bleedTexels = 4;
+
+    /// <summary>
+    /// Grows the active layer's colour <paramref name="texels"/> texels outward from every UV island of the
+    /// texture (the same bleed as edge padding on save, but into the layer, where it can be seen and painted over).
+    /// Texels inside the islands don't change. One undo step.
+    /// </summary>
+    private void BleedActiveLayer(int texels)
+    {
+        if (ActiveTextureObject is not { } texture) return;
+        int index = Model!.Textures.IndexOf(texture);
+        var inside = UvRaster.Coverage(Model.Source, p => Model.TextureOf(p) == index, texture.Width, texture.Height);
+        if (!inside.Contains(true))
+        {
+            SetStatus($"No UVs use {texture.Name}, so there are no island edges to bleed from.", error: true);
+            return;
+        }
+        var layer = texture.ActiveLayer;
+        var bled = EdgePadding.Pad(layer.Pixels, texture.Width, texture.Height, inside, texels);
+        int changed = 0;
+        for (int i = 0; i < bled.Length; i++) if (!bled[i].Equals(layer.Pixels[i])) changed++;
+        // A new layer object with the result, so the layer undo step can swap the old one back.
+        LayerEdit(texture, () => texture.Layers[texture.ActiveLayerIndex] =
+            new Layer(layer.Name, bled) { Visible = layer.Visible, Opacity = layer.Opacity, Blend = layer.Blend });
+        SetStatus($"Bled {layer.Name} {texels} texel{(texels == 1 ? "" : "s")} past the UV islands ({changed} texels changed).", error: false);
+    }
+
+    private void DrawBleedPopup()
+    {
+        if (openBleed)
+        {
+            ImGui.OpenPopup("Bleed edges");
+            openBleed = false;
+        }
+        ImGui.SetNextWindowPos(new Vector2(uvRect.X + uvRect.Width * 0.5f, uvRect.Y + uvRect.Height * 0.4f), ImGuiCond.Appearing, new Vector2(0.5f, 0.5f));
+        if (!ImGui.BeginPopupModal("Bleed edges", ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings)) return;
+        if (ActiveTextureObject is not { } texture)
+        {
+            ImGui.CloseCurrentPopup();
+            ImGui.EndPopup();
+            return;
+        }
+        ImGui.TextUnformatted($"Grow {texture.ActiveLayer.Name}'s colour outward from every UV island.");
+        ImGui.SetNextItemWidth(200);
+        ImGui.SliderInt("Texels", ref bleedTexels, 1, 64);
+        ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);
+        ImGui.TextUnformatted("Each ring takes the average of the colour next to it. Texels inside the islands\nstay as they are. Ctrl+Z undoes it.");
+        ImGui.PopStyleColor();
+        if (ImGui.Button("Bleed", new Vector2(100, 0)) || ImGui.IsKeyPressed(ImGuiKey.Enter))
+        {
+            BleedActiveLayer(bleedTexels);
+            ImGui.CloseCurrentPopup();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Cancel", new Vector2(100, 0)) || ImGui.IsKeyPressed(ImGuiKey.Escape)) ImGui.CloseCurrentPopup();
+        ImGui.EndPopup();
+    }
+
     /// <summary>The surface point of the active object whose UVs are at <paramref name="texelPoint"/> on the active texture.</summary>
     private bool HitAtTexel(Vector2 texelPoint, out SurfaceHit hit)
     {
@@ -129,6 +191,22 @@ internal sealed partial class App
         bool restored;
         using (var reopened = PaintTexture.FromEncoded("padded.png", ".png", File.ReadAllBytes(png), png))
             restored = LayerFile.TryLoad(reopened, png, out _) && reopened.Layers.Count == tex.Layers.Count;
+        int activeBefore = tex.ActiveLayerIndex;
+        tex.ActiveLayerIndex = 0;
+        var layerBefore = (Color[])tex.ActiveLayer.Pixels.Clone();
+        BleedActiveLayer(4);
+        var bledPixels = tex.ActiveLayer.Pixels;
+        int bledOutside = 0;
+        bool bleedInsideKept = true;
+        for (int i = 0; i < bledPixels.Length; i++)
+        {
+            if (inside[i]) bleedInsideKept &= bledPixels[i].Equals(layerBefore[i]);
+            else if (!bledPixels[i].Equals(layerBefore[i])) bledOutside++;
+        }
+        undo.Undo();
+        bool bleedUndone = tex.ActiveLayer.Pixels.SequenceEqual(layerBefore);
+        Console.WriteLine($"[selftest] bleed edges (4) on {tex.ActiveLayer.Name}: {bledOutside} texels outside grew, inside kept {bleedInsideKept}, undone {bleedUndone}");
+        tex.ActiveLayerIndex = activeBefore;
         Console.WriteLine($"[selftest] edge padding (4): {inside.Count(b => b)} texels inside islands saved exactly {insideExact}, "
                           + $"{changedOutside} outside bled; layers restored beside the padded image {restored} ({tex.Layers.Count} layers)");
     }

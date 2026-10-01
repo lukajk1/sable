@@ -256,6 +256,7 @@ internal sealed partial class App
         ImGui.NewLine();
         if (Button("Merge down", "Merge this layer into the one below (Ctrl+E)", index > 0)) MergeLayerDown();
         if (Button("Flatten", "Merge every layer into one", count > 1)) LayerEdit(texture, texture.Flatten);
+        if (Button("Bleed...", "Grow this layer's colour outward from the UV islands")) openBleed = true;
         ImGui.NewLine();
         ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);
         ImGui.TextWrapped(count > 1 || texture.HasLayers
