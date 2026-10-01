@@ -20,6 +20,9 @@ internal sealed class Settings
     public float FillTolerance { get; set; }
     public bool FillContiguous { get; set; } = true;
     public bool FillAllLayers { get; set; }
+    public bool MirrorX { get; set; }
+    /// <summary>The stroke stabilizer's string, 0..1 of its longest.</summary>
+    public float Smoothing { get; set; }
 
     // Display.
     public int TextureView { get; set; }
@@ -40,6 +43,14 @@ internal sealed class Settings
     public int WindowWidth { get; set; }
     public int WindowHeight { get; set; }
     public bool WindowMaximized { get; set; }
+
+    // Palette (UI/Palette.cs). Colours are "#RRGGBB".
+    /// <summary>The palette shown in the panel: a built-in's name or "Custom".</summary>
+    public string? PaletteName { get; set; }
+    /// <summary>The Custom palette's colours.</summary>
+    public List<string>? PaletteCustom { get; set; }
+    /// <summary>Recently painted colours, newest first.</summary>
+    public List<string>? ColorHistory { get; set; }
 
     /// <summary>%APPDATA%\Sable\settings.json, or SABLE_SETTINGS when set (for tests).</summary>
     private static string FilePath => Environment.GetEnvironmentVariable("SABLE_SETTINGS") is { Length: > 0 } custom

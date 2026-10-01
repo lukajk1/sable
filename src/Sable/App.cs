@@ -160,8 +160,11 @@ internal sealed partial class App : IDisposable
     }
 
     /// <summary>A stroke on a texture's active layer: the pencil always at full opacity, the brush and eraser at the opacity slider.</summary>
-    private Stroke NewStroke(int texture) =>
-        new(Model!.Textures[texture], PaintColor, tool is Tool.Brush or Tool.Eraser ? opacity : 1f, MaskFor(texture), erase: tool == Tool.Eraser);
+    private Stroke NewStroke(int texture)
+    {
+        if (tool != Tool.Eraser) palette.Remember(ColorWheel.HsvToRgb(hsv));
+        return new(Model!.Textures[texture], PaintColor, tool is Tool.Brush or Tool.Eraser ? opacity : 1f, MaskFor(texture), erase: tool == Tool.Eraser);
+    }
 
     /// <summary>Pen pressure 0..1 while the pen is drawing; 1 with the mouse.</summary>
     private float RawPressure => usingPen ? (PenInput.InContact ? PenInput.Pressure : 0f) : 1f;
@@ -265,6 +268,7 @@ internal sealed partial class App : IDisposable
             DrawResizePopup();
             DrawColorPicker();
             DrawToolCursor();
+            DrawSmoothingString();
             ImGui.PopItemFlag();
             rlImGui.End();
             UpdateSystemCursor();
@@ -452,6 +456,7 @@ internal sealed partial class App : IDisposable
 
     // A file dialog open in the helper process, and what to do with its answer.
     private readonly FileBrowser fileBrowser = new();
+    private readonly Palette palette = new();
     private bool openPathPopup;
     private string pathInput = "";
 
@@ -860,12 +865,22 @@ internal sealed partial class App : IDisposable
         if (stroke != null)
         {
             // Every point the pen passed through, even on the frame it lifts.
-            foreach (var (point, pressure) in StrokePoints())
+            foreach (var (raw, pressure) in StrokePoints())
             {
+                if (!Stabilize(raw, out var point)) continue;
                 if (strokeIn3D) Continue3D(point, pressure);
                 else ContinueUv(point, pressure);
             }
-            if (!pointerDown) EndStroke();
+            if (!pointerDown)
+            {
+                // The stabilized line catches up with the pen where it lifted.
+                if (SmoothingRadius >= 0.5f && Vector2.DistanceSquared(smoothPoint, smoothRaw) > 0.25f)
+                {
+                    if (strokeIn3D) Continue3D(smoothRaw, lastPressure);
+                    else ContinueUv(smoothRaw, lastPressure);
+                }
+                EndStroke();
+            }
         }
 
         // 3D view.
@@ -1097,6 +1112,7 @@ internal sealed partial class App : IDisposable
             return;
         }
         state.ActiveTexture = texture;
+        palette.Remember(ColorWheel.HsvToRgb(hsv));
         var fill = new Stroke(tex, PaintColor, 1f, mask);
         if (shift)
         {
@@ -1206,6 +1222,13 @@ internal sealed partial class App : IDisposable
                 tex.Wrap((int)MathF.Floor(uv.Y), tex.Height) + (uv.Y - MathF.Floor(uv.Y)));
             state.Cursor.TexelRadius = brushSize * 0.5f;
         }
+        if (MirrorHit(hit, out var mirrored) && Model.TextureOf(mirrored.Part) == texture)
+        {
+            state.Cursor.Mirror3D = tool != Tool.Pencil;
+            state.Cursor.MirrorScreen = view3d.WorldToScreen(mirrored.Point);
+            state.Cursor.MirrorUv = true;
+            state.Cursor.MirrorTexelCenter = Raycast.UvAt(Model.Source.Parts[mirrored.Part], mirrored.Triangle, mirrored.Barycentric) * size;
+        }
     }
 
     /// <summary>The pencil texel's square mapped onto the hit triangle's plane, lifted off the surface a hair.</summary>
@@ -1223,16 +1246,23 @@ internal sealed partial class App : IDisposable
     {
         var tex = Model!.Textures[state.ActiveTexture];
         state.Cursor.Visible = true;
+        Vector2 at;
         if (tool == Tool.Pencil)
         {
             state.Cursor.Pencil = true;
             state.Cursor.Texel = ((int)MathF.Floor(uvView.MouseTexel.X), (int)MathF.Floor(uvView.MouseTexel.Y));
             if (!uvView.MouseOnTexture) state.Cursor.Visible = false;
+            at = new Vector2(state.Cursor.Texel.X + 0.5f, state.Cursor.Texel.Y + 0.5f);
         }
         else
         {
-            state.Cursor.TexelCenter = Brush.SnapCenter(uvView.MouseTexel, brushSize);
+            state.Cursor.TexelCenter = at = Brush.SnapCenter(uvView.MouseTexel, brushSize);
             state.Cursor.TexelRadius = brushSize * 0.5f;
+        }
+        if (state.Cursor.Visible && MirrorTexel(at) is { } mirrored)
+        {
+            state.Cursor.MirrorUv = true;
+            state.Cursor.MirrorTexelCenter = mirrored;
         }
     }
 
@@ -1276,6 +1306,14 @@ internal sealed partial class App : IDisposable
         stroke = NewStroke(texture);
         lastPressure = FirstPressure();
         SetDab(lastPressure);
+        StartSmoothing();
+        if (ShiftDown && lastStrokeEnd3D is { } from && lastStrokeEndTexture3D == texture)
+        {
+            // Shift+click: a straight line (on screen) from where the last stroke ended.
+            lastMouse = view3d.WorldToScreen(from);
+            ContinueLocal3D(view3d.LocalMouse, lastPressure);
+            return;
+        }
         if (dab) Dab3D(hit);
         lastMouse = view3d.LocalMouse;
     }
@@ -1291,9 +1329,10 @@ internal sealed partial class App : IDisposable
     /// Carries a 3D stroke to <paramref name="screenPoint"/>: dabs every pixel for the pencil, and at a small fraction
     /// of the brush's screen radius for the brush, so small movements still paint.
     /// </summary>
-    private void Continue3D(Vector2 screenPoint, float pressure)
+    private void Continue3D(Vector2 screenPoint, float pressure) => ContinueLocal3D(view3d.ScreenToLocal(screenPoint), pressure);
+
+    private void ContinueLocal3D(Vector2 to, float pressure)
     {
-        Vector2 to = view3d.ScreenToLocal(screenPoint);
         float spacing = tool == Tool.Pencil ? 1f : MathF.Max(1f, cursorScreenRadius * 0.15f);
         float distance = Vector2.Distance(lastMouse, to);
         if (distance < spacing) return;
@@ -1314,6 +1353,13 @@ internal sealed partial class App : IDisposable
 
     private void Dab3D(SurfaceHit hit)
     {
+        lastDabPoint = hit.Point;
+        DabAt(hit);
+        if (MirrorHit(hit, out var mirrored) && Model!.TextureOf(mirrored.Part) == strokeTexture) DabAt(mirrored);
+    }
+
+    private void DabAt(SurfaceHit hit)
+    {
         if (tool == Tool.Pencil)
         {
             var tex = stroke!.Texture;
@@ -1326,6 +1372,21 @@ internal sealed partial class App : IDisposable
         }
     }
 
+    /// <summary>A UV-view dab (brush) at a texel point, and its mirror.</summary>
+    private void DabUv(Vector2 center)
+    {
+        Brush.DabTexels(stroke!, center, dabSize, hardness);
+        if (MirrorTexel(center) is { } mirrored) Brush.DabTexels(stroke!, Brush.SnapCenter(mirrored, dabSize), dabSize, hardness);
+    }
+
+    /// <summary>A UV-view pencil line, and its mirror (joined between the mirrored ends).</summary>
+    private void LineUv((int X, int Y) from, (int X, int Y) to)
+    {
+        Brush.Line(stroke!, from.X, from.Y, to.X, to.Y, clip: true);
+        if (MirrorTexel(new Vector2(from.X + 0.5f, from.Y + 0.5f)) is { } a && MirrorTexel(new Vector2(to.X + 0.5f, to.Y + 0.5f)) is { } b)
+            Brush.Line(stroke!, (int)MathF.Floor(a.X), (int)MathF.Floor(a.Y), (int)MathF.Floor(b.X), (int)MathF.Floor(b.Y), clip: true);
+    }
+
     private void BeginUv()
     {
         strokeTexture = state.ActiveTexture;
@@ -1333,15 +1394,25 @@ internal sealed partial class App : IDisposable
         stroke = NewStroke(strokeTexture);
         lastPressure = FirstPressure();
         SetDab(lastPressure);
+        StartSmoothing();
+        bool line = ShiftDown && lastStrokeEndUv is { } && lastStrokeEndTextureUv == strokeTexture;
         if (tool == Tool.Pencil)
         {
-            lastTexel = ((int)MathF.Floor(uvView.MouseTexel.X), (int)MathF.Floor(uvView.MouseTexel.Y));
-            Brush.Line(stroke, lastTexel.X, lastTexel.Y, lastTexel.X, lastTexel.Y, clip: true);
+            var texel = ((int)MathF.Floor(uvView.MouseTexel.X), (int)MathF.Floor(uvView.MouseTexel.Y));
+            // Shift+click: a straight line from where the last stroke ended.
+            var from = line ? ((int)MathF.Floor(lastStrokeEndUv!.Value.X), (int)MathF.Floor(lastStrokeEndUv.Value.Y)) : texel;
+            LineUv(from, texel);
+            lastTexel = texel;
+        }
+        else if (line)
+        {
+            lastDab = lastStrokeEndUv!.Value;
+            ContinueUv(pointer, lastPressure);
         }
         else
         {
             lastDab = Brush.SnapCenter(uvView.MouseTexel, dabSize);
-            Brush.DabTexels(stroke, lastDab, dabSize, hardness);
+            DabUv(lastDab);
         }
     }
 
@@ -1353,7 +1424,7 @@ internal sealed partial class App : IDisposable
         {
             var texel = ((int)MathF.Floor(texelPoint.X), (int)MathF.Floor(texelPoint.Y));
             if (texel == lastTexel) return;
-            Brush.Line(stroke!, lastTexel.X, lastTexel.Y, texel.Item1, texel.Item2, clip: true);
+            LineUv(lastTexel, texel);
             lastTexel = texel;
             return;
         }
@@ -1365,7 +1436,7 @@ internal sealed partial class App : IDisposable
         for (int s = 1; s <= steps; s++)
         {
             SetDab(float.Lerp(lastPressure, pressure, s / (float)steps));
-            Brush.DabTexels(stroke!, Brush.SnapCenter(Vector2.Lerp(lastDab, center, s / (float)steps), dabSize), dabSize, hardness);
+            DabUv(Brush.SnapCenter(Vector2.Lerp(lastDab, center, s / (float)steps), dabSize));
         }
         lastDab = center;
         lastPressure = pressure;
@@ -1374,6 +1445,7 @@ internal sealed partial class App : IDisposable
     private void EndStroke()
     {
         if (stroke == null) return;
+        RememberStrokeEnd();
         if (stroke.Finish() is { } step) undo.Push(step);
         stroke = null;
     }
@@ -1755,6 +1827,10 @@ internal sealed partial class App : IDisposable
                                | ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoBringToFrontOnFocus);
 
         DrawToolSection();
+        palette.Draw(ColorWheel.HsvToRgb(hsv),
+            rgb => hsv = ColorWheel.RgbToHsv(rgb, hsv.X),
+            then => fileBrowser.Open(false, "Load palette", Palette.FileFilter, null, null, then),
+            then => fileBrowser.Open(true, "Save palette", Palette.SaveFilter, null, palette.Name, then));
         ImGui.Separator();
 
         if (Model == null)
@@ -1870,6 +1946,14 @@ internal sealed partial class App : IDisposable
         ImGui.SetNextItemWidth(150);
         if (ImGui.SliderFloat("Flow", ref flowPercent, 1f, 100f, "%.0f%%", ImGuiSliderFlags.Logarithmic)) flow = flowPercent / 100f;
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("How much each dab adds. Low flow builds up as you go over a spot, up to the opacity.");
+        float smoothingPercent = smoothing * 100f;
+        ImGui.SetNextItemWidth(150);
+        if (ImGui.SliderFloat("Smoothing", ref smoothingPercent, 0f, 100f, smoothingPercent <= 0 ? "off" : "%.0f%%")) smoothing = smoothingPercent / 100f;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("A stabilizer: the stroke trails the pen on a string (up to 60 px), so small wobbles never reach the canvas.\nThe line catches up where the pen lifts. Shift+click draws a straight line from the last stroke.");
+        ImGui.Checkbox("Mirror X", ref mirrorX);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Paint mirrored left/right across the middle of the active object, in both views.\nThe mirrored brush shows in blue; parts with no mirror image get nothing.");
         DrawPressureSection();
         ImGui.SetNextItemWidth(150);
         ImGui.SliderFloat("Lighting", ref view3d.Shade, 0f, 1f, view3d.Shade <= 0 ? "flat" : "%.2f");
@@ -2295,6 +2379,7 @@ internal sealed partial class App : IDisposable
 
                 if (state.ActiveTexture >= 0) SelfTestLayers(Model.Textures[state.ActiveTexture]);
                 if (state.ActiveTexture >= 0) SelfTestResize(Model.Textures[state.ActiveTexture]);
+                SelfTestStrokes();
 
                 tool = Tool.Brush;
                 Console.WriteLine($"[selftest] undo available: {undo.CanUndo}; dirty textures: {Model.Textures.Count(t => t.Dirty)}");
@@ -2362,6 +2447,9 @@ internal sealed partial class App : IDisposable
         split = Math.Clamp(saved.Split, 0.15f, 0.85f);
         newTextureSize = ValidTextureSize(saved.NewTextureSize);
         fillAllLayers = saved.FillAllLayers;
+        palette.LoadFrom(saved);
+        mirrorX = saved.MirrorX;
+        smoothing = Math.Clamp(saved.Smoothing, 0f, 1f);
         if (saved.RecentFolders != null) fileBrowser.RecentFolders.AddRange(saved.RecentFolders.Where(Directory.Exists).Take(8));
         layersOpen = saved.LayersOpen;
 
@@ -2406,6 +2494,8 @@ internal sealed partial class App : IDisposable
             Split = split,
             NewTextureSize = newTextureSize,
             FillAllLayers = fillAllLayers,
+            MirrorX = mirrorX,
+            Smoothing = smoothing,
             RecentFolders = fileBrowser.RecentFolders.ToList(),
             LayersOpen = layersOpen,
             WindowMaximized = Raylib.IsWindowMaximized(),
@@ -2423,6 +2513,7 @@ internal sealed partial class App : IDisposable
             (saved.WindowX, saved.WindowY) = ((int)position.X, (int)position.Y);
             (saved.WindowWidth, saved.WindowHeight) = (Raylib.GetScreenWidth(), Raylib.GetScreenHeight());
         }
+        palette.SaveTo(saved);
         saved.Save();
     }
 

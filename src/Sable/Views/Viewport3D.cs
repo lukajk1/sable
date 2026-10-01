@@ -156,6 +156,11 @@ public sealed class Viewport3D : IDisposable
             Raylib.DrawCircleLinesV(state.Cursor.Screen, state.Cursor.ScreenRadius, new Color(0, 0, 0, 160));
             Raylib.DrawCircleLinesV(state.Cursor.Screen, state.Cursor.ScreenRadius + 1, new Color(255, 255, 255, 220));
         }
+        if (state.Cursor.Mirror3D)
+        {
+            Raylib.DrawCircleLinesV(state.Cursor.MirrorScreen, state.Cursor.ScreenRadius, new Color(0, 0, 0, 110));
+            Raylib.DrawCircleLinesV(state.Cursor.MirrorScreen, state.Cursor.ScreenRadius + 1, new Color(120, 200, 255, 170));
+        }
         Raylib.EndTextureMode();
     }
 

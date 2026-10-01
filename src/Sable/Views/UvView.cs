@@ -207,6 +207,13 @@ public sealed class UvView : IDisposable
             Raylib.DrawCircleLinesV(center, radius + 1, new Color(0, 0, 0, 160));
             Raylib.DrawCircleLinesV(center, radius, Color.White);
         }
+        if (cursor.MirrorUv)
+        {
+            Vector2 mirror = offset + cursor.MirrorTexelCenter * zoom;
+            float radius = cursor.Pencil ? MathF.Max(zoom * 0.5f, 2f) : MathF.Max(cursor.TexelRadius * zoom, 2f);
+            Raylib.DrawCircleLinesV(mirror, radius + 1, new Color(0, 0, 0, 110));
+            Raylib.DrawCircleLinesV(mirror, radius, new Color(120, 200, 255, 170));
+        }
     }
 
     private void DrawTexelGrid(Rectangle area)

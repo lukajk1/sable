@@ -56,4 +56,10 @@ public struct BrushCursor
     public Vector2 Screen;
     public float ScreenRadius;
     public Vector3[]? TexelOutline;
+
+    /// <summary>Mirror painting: where the mirrored brush lands, in the 3D view and in texels.</summary>
+    public bool Mirror3D;
+    public Vector2 MirrorScreen;
+    public bool MirrorUv;
+    public Vector2 MirrorTexelCenter;
 }

@@ -60,6 +60,88 @@ public static class Raycast
         return found;
     }
 
+    /// <summary>
+    /// The visible surface point of object <paramref name="objectIndex"/> nearest to <paramref name="point"/>, no
+    /// further than <paramref name="maxDistance"/> (mirror painting looks for the surface across the plane).
+    /// </summary>
+    public static bool Nearest(LoadedModel model, int objectIndex, Vector3 point, float maxDistance, out SurfaceHit hit)
+    {
+        hit = default;
+        float best = maxDistance * maxDistance;
+        bool found = false;
+        var candidates = new List<int>();
+        foreach (int p in model.Objects[objectIndex].Parts)
+        {
+            var part = model.Parts[p];
+            if (Vector3.DistanceSquared(Vector3.Clamp(point, part.Min, part.Max), point) > best) continue;
+            candidates.Clear();
+            part.Bvh.QuerySphere(point, MathF.Sqrt(best), candidates);
+            var positions = part.Positions;
+            var indices = part.Indices;
+            foreach (int t in candidates)
+            {
+                if (!part.TriangleVisible(t)) continue;
+                Vector3 a = positions[indices[t * 3]], b = positions[indices[t * 3 + 1]], c = positions[indices[t * 3 + 2]];
+                Vector3 q = ClosestPoint(point, a, b, c, out Vector3 barycentric);
+                float d = Vector3.DistanceSquared(q, point);
+                if (d >= best) continue;
+                var normal = Vector3.Cross(b - a, c - a);
+                if (normal.LengthSquared() < 1e-20f) continue;
+                best = d;
+                found = true;
+                hit = new SurfaceHit
+                {
+                    Part = p,
+                    Triangle = t,
+                    Distance = MathF.Sqrt(d),
+                    Point = q,
+                    Normal = Vector3.Normalize(normal),
+                    Barycentric = barycentric,
+                };
+            }
+        }
+        return found;
+    }
+
+    // Closest point on a triangle (Ericson, Real-Time Collision Detection 5.1.5), with its barycentric weights.
+    private static Vector3 ClosestPoint(Vector3 p, Vector3 a, Vector3 b, Vector3 c, out Vector3 barycentric)
+    {
+        Vector3 ab = b - a, ac = c - a, ap = p - a;
+        float d1 = Vector3.Dot(ab, ap), d2 = Vector3.Dot(ac, ap);
+        if (d1 <= 0 && d2 <= 0) { barycentric = new Vector3(1, 0, 0); return a; }
+        Vector3 bp = p - b;
+        float d3 = Vector3.Dot(ab, bp), d4 = Vector3.Dot(ac, bp);
+        if (d3 >= 0 && d4 <= d3) { barycentric = new Vector3(0, 1, 0); return b; }
+        float vc = d1 * d4 - d3 * d2;
+        if (vc <= 0 && d1 >= 0 && d3 <= 0)
+        {
+            float v = d1 / (d1 - d3);
+            barycentric = new Vector3(1 - v, v, 0);
+            return a + ab * v;
+        }
+        Vector3 cp = p - c;
+        float d5 = Vector3.Dot(ab, cp), d6 = Vector3.Dot(ac, cp);
+        if (d6 >= 0 && d5 <= d6) { barycentric = new Vector3(0, 0, 1); return c; }
+        float vb = d5 * d2 - d1 * d6;
+        if (vb <= 0 && d2 >= 0 && d6 <= 0)
+        {
+            float w = d2 / (d2 - d6);
+            barycentric = new Vector3(1 - w, 0, w);
+            return a + ac * w;
+        }
+        float va = d3 * d6 - d5 * d4;
+        if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0)
+        {
+            float w = (d4 - d3) / (d4 - d3 + (d5 - d6));
+            barycentric = new Vector3(0, 1 - w, w);
+            return b + (c - b) * w;
+        }
+        float denom = 1f / (va + vb + vc);
+        float vv = vb * denom, ww = vc * denom;
+        barycentric = new Vector3(1 - vv - ww, vv, ww);
+        return a + ab * vv + ac * ww;
+    }
+
     // Möller-Trumbore, both sides.
     private static bool IntersectTriangle(Vector3 origin, Vector3 dir, Vector3 a, Vector3 b, Vector3 c, out float t, out float u, out float v)
     {
