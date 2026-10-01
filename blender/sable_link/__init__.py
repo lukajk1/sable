@@ -4,15 +4,18 @@
 "Send to Sable" exports the selected meshes to a link folder (model.glb + link.json) and starts Sable with
 ``--link <link.json>``. While linked, geometry/transform/material edits re-export after a short pause, and image
 files Sable saves are reloaded in Blender.
+
+"Stack Identical UV Islands" moves UV islands of the same shape onto one master island, so repeated parts share
+one patch of texture.
 """
 
 import os
 import time
 
 import bpy
-from bpy.props import StringProperty
+from bpy.props import BoolProperty, FloatProperty, StringProperty
 
-from . import link
+from . import link, uv_stack
 
 
 class SABLE_AP_preferences(bpy.types.AddonPreferences):
@@ -92,6 +95,52 @@ class SABLE_OT_stop_link(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class SABLE_OT_stack_identical(bpy.types.Operator):
+    """Move UV islands of the same shape exactly onto one master island, so identical parts share texture"""
+    bl_idname = "uv.sable_stack_identical"
+    bl_label = "Stack Identical UV Islands"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    tolerance: FloatProperty(
+        name="Tolerance",
+        description="How far apart matching UV points may be, in UV units (1 = the texture's width)",
+        default=0.002,
+        min=0.0,
+        soft_max=0.05,
+        step=0.01,
+        precision=4,
+    )
+    allow_mirror: BoolProperty(
+        name="Allow Mirrored",
+        description="Also stack islands that are mirror images of the master, flipping them onto it",
+        default=True,
+    )
+    selected_only: BoolProperty(
+        name="Selected Only",
+        description="In Edit Mode, only islands with selected faces (selected UVs without UV sync selection) take part",
+        default=False,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode in {'OBJECT', 'EDIT_MESH'} and bool(uv_stack.target_objects(context))
+
+    def execute(self, context):
+        result = uv_stack.stack_identical(context, tolerance=self.tolerance, allow_mirror=self.allow_mirror,
+                                          selected_only=self.selected_only)
+        if result.error:
+            self.report({'ERROR'}, result.error)
+            return {'CANCELLED'}
+        if not result.groups:
+            self.report({'WARNING'}, "No identical UV islands found ({} islands checked)".format(result.islands))
+        elif not result.moved:
+            self.report({'INFO'}, "{} group(s) of identical islands, already stacked".format(result.groups))
+        else:
+            self.report({'INFO'}, "Stacked {} island(s) onto {} master(s), {} mirrored ({:.0f} ms)".format(
+                result.moved, result.groups, result.mirrored, result.seconds * 1000.0))
+        return {'FINISHED'}
+
+
 class SABLE_PT_panel(bpy.types.Panel):
     bl_label = "Sable Link"
     bl_idname = "SABLE_PT_panel"
@@ -132,16 +181,40 @@ class SABLE_PT_panel(bpy.types.Panel):
         row.operator(SABLE_OT_stop_link.bl_idname, icon='CANCEL')
 
 
+class SABLE_PT_uv_islands(bpy.types.Panel):
+    bl_label = "UV Islands"
+    bl_idname = "SABLE_PT_uv_islands"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Sable"
+    bl_parent_id = SABLE_PT_panel.bl_idname
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator(SABLE_OT_stack_identical.bl_idname, icon='UV_ISLANDSEL')
+        col = layout.column(align=True)
+        col.scale_y = 0.8
+        col.label(text="Stacked copies share the master's texture:", icon='INFO')
+        col.label(text="paint already on a copy is replaced by the master's.", icon='BLANK1')
+
+
 def _object_menu(self, context):
     self.layout.separator()
     self.layout.operator(SABLE_OT_send_selection.bl_idname, icon='EXPORT')
+
+
+def _uv_menu(self, context):
+    self.layout.separator()
+    self.layout.operator(SABLE_OT_stack_identical.bl_idname, icon='UV_ISLANDSEL')
 
 
 _classes = (
     SABLE_AP_preferences,
     SABLE_OT_send_selection,
     SABLE_OT_stop_link,
+    SABLE_OT_stack_identical,
     SABLE_PT_panel,
+    SABLE_PT_uv_islands,
 )
 
 
@@ -149,11 +222,13 @@ def register():
     for cls in _classes:
         bpy.utils.register_class(cls)
     bpy.types.VIEW3D_MT_object.append(_object_menu)
+    bpy.types.IMAGE_MT_uvs.append(_uv_menu)
     link.register()
 
 
 def unregister():
     link.unregister()
+    bpy.types.IMAGE_MT_uvs.remove(_uv_menu)
     bpy.types.VIEW3D_MT_object.remove(_object_menu)
     for cls in reversed(_classes):
         bpy.utils.unregister_class(cls)

@@ -41,6 +41,8 @@ The Sable Link add-on (`blender/sable_link`, Blender 4.2 and later, tested on 5.
 
 Stop link (in the Sable tab) ends the updates; Sable says so and keeps running. Opening another .blend also stops it.
 
+**Stack identical UV islands** (UV editor > UV menu, or the UV Islands panel in the Sable tab): finds UV islands with the same shape, across the selected objects, and moves every copy (turned, and mirrored if allowed) exactly onto one master island, so repeated parts share one patch of texture and painting one paints them all. The master is the island with the active face, else the lowest-left. Options in the redo panel: tolerance (0.002 UV units), allow mirrored matches, and selected islands only (Edit Mode). Copies show the master's paint afterwards, so stack before painting. On the player model it stacks 163 islands onto 52 masters. With the link running, Sable updates on its own; Ctrl+Z in Blender undoes it.
+
 **How it works:** Blender writes the linked objects to `%TEMP%\Sable\link\<blend>-<id>\model.glb` (its own quick exporter: evaluated meshes, world transforms baked in, one primitive per material, no images), then `link.json` with a revision number, the .blend's path and the image file of each material. Sable is started as `Sable --link <link.json>`, checks the revision four times a second, and loads a newer one in the background. Ctrl+R reloads it by hand. The add-on finds Sable in its preferences, then the installed copy (`%LOCALAPPDATA%\Programs\Sable`, or the installer's registry entry).
 
 ## The window
