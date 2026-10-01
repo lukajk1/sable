@@ -30,7 +30,15 @@ internal sealed partial class App
         if (WritePhotoshopFile() is not { } path) return;
         try
         {
-            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            // Start Photoshop itself with the file: the .psd association can be broken (Photoshop starts, but the
+            // file isn't passed to it), and launching the exe also hands the file to an already running Photoshop.
+            if (FindPhotoshop() is { } photoshop)
+            {
+                var start = new ProcessStartInfo(photoshop) { UseShellExecute = false };
+                start.ArgumentList.Add(path);
+                Process.Start(start);
+            }
+            else Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
             SetStatus($"Sent {photoshopTexture!.Name} to Photoshop ({Path.GetFileName(path)}). Each save there comes back here; "
                       + "the UV guide layer stays in Photoshop.", error: false);
         }
@@ -38,6 +46,31 @@ internal sealed partial class App
         {
             SetStatus($"Wrote {path}, but couldn't open it ({e.Message}). Open it in Photoshop yourself; saves still come back.", error: true);
         }
+    }
+
+    /// <summary>
+    /// The newest Photoshop installed: "Adobe Photoshop 2022" over "Adobe Photoshop CC 2019" under Program Files\Adobe,
+    /// else the App Paths registry entry. Null when there's none (the file is then opened by association).
+    /// </summary>
+    private static string? FindPhotoshop()
+    {
+        string adobe = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Adobe");
+        if (Directory.Exists(adobe))
+        {
+            var newest = Directory.GetDirectories(adobe, "Adobe Photoshop*")
+                .Select(dir => (Exe: Path.Combine(dir, "Photoshop.exe"), Year: int.TryParse(new string(Path.GetFileName(dir).Where(char.IsDigit).ToArray()), out int y) ? y : 0))
+                .Where(p => File.Exists(p.Exe))
+                .OrderByDescending(p => p.Year)
+                .Select(p => p.Exe)
+                .FirstOrDefault();
+            if (newest != null) return newest;
+        }
+        foreach (var hive in new[] { Microsoft.Win32.Registry.CurrentUser, Microsoft.Win32.Registry.LocalMachine })
+        {
+            using var key = hive.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\App Paths\Photoshop.exe");
+            if (key?.GetValue(null) is string exe && File.Exists(exe.Trim('"'))) return exe.Trim('"');
+        }
+        return null;
     }
 
     /// <summary>Writes the active texture's PSD and starts watching it. Returns its path, or null if it couldn't.</summary>
