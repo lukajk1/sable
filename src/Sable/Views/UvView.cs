@@ -14,6 +14,8 @@ public sealed class UvView : IDisposable
     public bool PixelGrid = true;
     /// <summary>Also draw, dimmed, other objects that use the same texture.</summary>
     public bool ShowSiblings = true;
+    /// <summary>Draw every UV edge; off, only the islands' outlines (follows the 3D view's wireframe toggle).</summary>
+    public bool InnerEdges = true;
 
     public bool Hovered { get; private set; }
     /// <summary>Mouse position in texels (x right, y down; may be outside the texture).</summary>
@@ -169,6 +171,7 @@ public sealed class UvView : IDisposable
             int component = edges.Component[e];
             if (source.ComponentHidden[component]) continue;
             if (onlyComponent >= 0 && component != onlyComponent) continue;
+            if (!InnerEdges && !edges.Boundary[e]) continue;
             Raylib.DrawLineV(offset + uvs[edges.A[e]] * scale, offset + uvs[edges.B[e]] * scale, color);
         }
     }
@@ -184,6 +187,23 @@ public sealed class UvView : IDisposable
                 // Each outline segment is one texel long; alternate them and shift the pattern over time.
                 bool dark = (((int)(a.X + a.Y) + phase) & 1) == 0;
                 Raylib.DrawLineEx(offset + a * zoom, offset + b * zoom, 1.5f, dark ? Color.Black : Color.White);
+            }
+        }
+        if (state.TransformCorners is { Length: 4 } corners)
+        {
+            var screen = corners.Select(c => offset + c * zoom).ToArray();
+            for (int i = 0; i < 4; i++)
+            {
+                Raylib.DrawLineEx(screen[i], screen[(i + 1) % 4], 3f, new Color(0, 0, 0, 200));
+                Raylib.DrawLineEx(screen[i], screen[(i + 1) % 4], 1f, new Color(120, 200, 255, 255));
+            }
+            for (int i = 0; i < 4; i++)
+            {
+                foreach (var c in new[] { screen[i], (screen[i] + screen[(i + 1) % 4]) * 0.5f })
+                {
+                    Raylib.DrawRectangleRec(new Rectangle(c.X - 4, c.Y - 4, 8, 8), Color.Black);
+                    Raylib.DrawRectangleRec(new Rectangle(c.X - 3, c.Y - 3, 6, 6), Color.White);
+                }
             }
         }
         if (state.Lasso is { Count: > 1 } lasso)

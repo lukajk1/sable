@@ -21,6 +21,8 @@ public sealed class EditorState
     public BrushCursor Cursor;
     /// <summary>The lasso selection (on one texture), or null.</summary>
     public Paint.TexelSelection? Selection;
+    /// <summary>The free transform's box (Ctrl+T) while one is running: its four corners in texels, clockwise from top-left.</summary>
+    public Vector2[]? TransformCorners;
     /// <summary>The lasso being drawn, in texels, or null.</summary>
     public List<Vector2>? Lasso;
 

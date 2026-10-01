@@ -224,6 +224,11 @@ public sealed class EdgeList
     public required int[] A { get; init; }
     public required int[] B { get; init; }
     public required int[] Component { get; init; }
+    /// <summary>
+    /// The edge is on the border of its UV island: no other triangle shares it with the same positions and UVs
+    /// (comparing coordinates, not vertex indices, which Assimp splits at hard normals too).
+    /// </summary>
+    public required bool[] Boundary { get; init; }
 
     public static EdgeList Build(MeshPart part)
     {
@@ -244,6 +249,30 @@ public sealed class EdgeList
                 component.Add(part.TriangleComponent[t]);
             }
         }
-        return new EdgeList { A = a.ToArray(), B = b.ToArray(), Component = component.ToArray() };
+        // Weld corners on position + UV, then count how many triangles use each welded edge.
+        var welded = new int[part.Positions.Length];
+        var ids = new Dictionary<(long, long, long, long, long), int>();
+        var extent = part.Max - part.Min;
+        float step = MathF.Max(MathF.Max(extent.X, extent.Y), MathF.Max(extent.Z, 1e-6f)) * 1e-5f;
+        for (int v = 0; v < welded.Length; v++)
+        {
+            var p = part.Positions[v];
+            var uv = part.Uvs != null ? part.Uvs[v] : Vector2.Zero;
+            var key = ((long)MathF.Round(p.X / step), (long)MathF.Round(p.Y / step), (long)MathF.Round(p.Z / step),
+                (long)MathF.Round(uv.X * 1e6f), (long)MathF.Round(uv.Y * 1e6f));
+            if (!ids.TryGetValue(key, out int id)) ids[key] = id = ids.Count;
+            welded[v] = id;
+        }
+        static long Key(int x, int y) => x < y ? ((long)x << 32) | (uint)y : ((long)y << 32) | (uint)x;
+        var uses = new Dictionary<long, int>();
+        for (int t = 0; t < part.TriangleCount; t++)
+        for (int e = 0; e < 3; e++)
+        {
+            long k = Key(welded[indices[t * 3 + e]], welded[indices[t * 3 + (e + 1) % 3]]);
+            uses[k] = uses.GetValueOrDefault(k) + 1;
+        }
+        var boundary = new bool[a.Count];
+        for (int i = 0; i < a.Count; i++) boundary[i] = uses.GetValueOrDefault(Key(welded[a[i]], welded[b[i]])) < 2;
+        return new EdgeList { A = a.ToArray(), B = b.ToArray(), Component = component.ToArray(), Boundary = boundary };
     }
 }

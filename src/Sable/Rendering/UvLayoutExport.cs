@@ -49,4 +49,22 @@ public static unsafe class UvLayoutExport
         Raylib.UnloadImage(image);
         if (!ok) throw new IOException($"Couldn't write {path}");
     }
+
+    /// <summary>The UV wireframe of <paramref name="parts"/> as pixels: <paramref name="line"/> on transparent.</summary>
+    public static Color[] Lines(GpuModel model, IEnumerable<int> parts, int width, int height, Color line)
+    {
+        Image image = Raylib.GenImageColor(width, height, Color.Blank);
+        var size = new Vector2(width, height);
+        foreach (int p in parts)
+        {
+            var part = model.Source.Parts[p];
+            if (part.Uvs == null) continue;
+            var edges = model.Edges[p];
+            for (int e = 0; e < edges.A.Length; e++)
+                Raylib.ImageDrawLineV(ref image, part.Uvs[edges.A[e]] * size, part.Uvs[edges.B[e]] * size, line);
+        }
+        var pixels = new Span<Color>(image.Data, width * height).ToArray();
+        Raylib.UnloadImage(image);
+        return pixels;
+    }
 }

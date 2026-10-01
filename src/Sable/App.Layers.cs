@@ -258,6 +258,9 @@ internal sealed partial class App
         if (Button("Flatten", "Merge every layer into one", count > 1)) LayerEdit(texture, texture.Flatten);
         if (Button("Bleed...", "Grow this layer's colour outward from the UV islands")) openBleed = true;
         ImGui.NewLine();
+        if (Button("Edit in Photoshop", "Open these layers in Photoshop as a PSD (with the UV layout as a guide layer);\nevery save there comes back here as one undo step")) EditInPhotoshop();
+        ImGui.NewLine();
+        DrawPhotoshopLinkStatus(texture);
         ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);
         ImGui.TextWrapped(count > 1 || texture.HasLayers
             ? "Ctrl+S saves the flattened image, and the layers beside it in a hidden .sable file."

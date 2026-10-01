@@ -75,6 +75,13 @@ public sealed class TexelSelection
         Refresh();
     }
 
+    /// <summary>Replaces the selected texels (a mask the size of the texture).</summary>
+    public void SetMask(bool[] mask)
+    {
+        Mask = (bool[])mask.Clone();
+        Refresh();
+    }
+
     public TexelSelection Clone()
     {
         var copy = new TexelSelection(Texture, Width, Height) { Mask = (bool[])Mask.Clone() };

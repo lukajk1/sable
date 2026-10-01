@@ -142,6 +142,7 @@ The lasso and box select make a selection of texels on the texture the UV view s
 - **Moving:** drag inside the selection to move those texels, which leaves the old spot transparent. Ctrl+drag moves a copy instead.
 - **Clearing:** click outside the selection, press Ctrl+D or Esc, or use Deselect on the UV toolbar.
 - **Painting:** while a selection exists, the pencil, brush and fill stay inside it, in both views.
+- **Free transform (Ctrl+T, or Transform on the UV toolbar):** a box with handles around the selected texels, as in Photoshop. Drag a corner to scale keeping the proportions (Shift: free ratio), a side to stretch, inside to move, or just outside a corner to rotate (Shift: 15° steps). The toolbar turns by 90° and flips horizontally or vertically; those are exact for pixel art. Smooth resamples bilinearly instead of taking the nearest texel. The texels are lifted off the active layer and previewed in both views; Enter (or a click away) applies as one undo step, Esc cancels.
 
 ### Palette
 
@@ -155,7 +156,8 @@ Each texture is a stack of layers, in the Layers window at the top right of the 
 
 - **The list:** top layer first, each with a thumbnail of its own pixels over a checkerboard (refreshed a few times a second while painting). The checkbox shows and hides a layer; click a layer to paint on it, double-click to rename it.
 - **Blend mode and opacity** (above the list) are the selected layer's: Normal, Multiply (shading), Screen (light), Overlay (contrast) or Add (glow), at 0-100%.
-- **Buttons:** New (a transparent layer above the selected one), Copy, Del, Up, Dn, Merge down (into the layer below, keeping its name and settings) and Flatten (everything into one).
+- **Buttons:** New (a transparent layer above the selected one), Copy, Del, Up, Dn, Merge down (into the layer below, keeping its name and settings), Flatten (everything into one), and Bleed... (grows the layer's colour 1 to 64 texels outward from every UV island, the same bleed as edge padding but into the layer, where it can be seen and painted over; island interiors don't change; one undo step).
+- **Edit in Photoshop:** sends the texture's layers to Photoshop (see below).
 - **Keys** (Photoshop's): Ctrl+Shift+N new layer, Ctrl+J duplicate, Ctrl+E merge down. They're in the Edit menu too.
 - **File > Import image as layer** adds an image as a new layer, stretched to the texture's size if it differs.
 
@@ -163,12 +165,16 @@ Every layer change is one undo step, and an opacity drag is one step from where 
 
 **Saving:** Ctrl+S writes the flattened image to the texture's file as before, so Blender and Unity only ever see a normal PNG. When a texture has more than one layer (or its one layer is hidden, faded or blended), the layers go beside it in a hidden file, `.<image>.sable`: a zip of `layers.json` and one PNG per layer. Unity skips files that start with a dot. Opening the model again brings the layers back, but only while they still add up to the image. If the image was changed by another program since, Sable opens it as one layer and says so, and the next save with layers replaces the old file.
 
+## Photoshop link
+
+Edit in Photoshop (Layers window, or the Edit menu) works like 3DCoat's: the texture's layers go to a PSD in `%TEMP%\Sable\photoshop\<model>_<texture>.psd`, with the UV layout on top as a locked guide layer at 60%, and it opens in whatever opens PSDs. Every time Photoshop saves it, Sable reads the layers back as one undo step: layers keep their names, settings and order, layers added in Photoshop are added, deleted ones go, and the guide stays out. It replaces anything painted in Sable since sending (Ctrl+Z brings it back), so paint in one place at a time; send again to start over from Sable's layers (Photoshop doesn't reload a file that changed on disk: use File > Revert there). The size has to stay the same: resize in Sable. Groups, masks, clipping and text or smart-object layers come back as plain pixel layers (with a note in the status bar); adjustment layers and layer effects are left out. Stop Photoshop link (Edit menu, or Stop in the Layers window) ends it.
+
 ## Display
 
 These are in the panel and the View menu:
 - **Lighting:** from lit to flat, for judging the painted colours as they are.
 - **Texture view (3D only):** Pixel (nearest, for pixel art), Smooth (bilinear), or Smooth + mipmaps (trilinear with 16x anisotropic, the usual game setting for high-res textures; the mipmaps stay current while painting). The UV view always shows exact texels.
-- **Wireframe and grid.**
+- **Wireframe and grid.** The wireframe toggle (Shift+Z) also sets the UV view: on, every UV edge; off, only the islands' outlines.
 - **UV texel grid, and showing other objects on the same texture** (dimmed) in the UV view.
 
 ## Textures and files
@@ -216,7 +222,7 @@ Sable --check model
 | `--select name` | Make the first object whose name contains `name` active, and frame it |
 | `--texview 0\|1\|2` | Start with the Pixel, Smooth or Smooth + mipmaps texture view |
 | `--screenshot out.png` | Render a few frames, save the window as a PNG and exit (settings are left alone) |
-| `--selftest` | Before the screenshot, run checks: test strokes, fill, box and lasso selection, flow build-up, hide undo, UV export and re-import, layers (blend modes, opacity, eraser, soft paint on a transparent layer, undo, the layer file round trip, merge down), resizing (2x nearest stays exact; a stroke after a resize and the resize both undo; redo), face and island fills, mirroring (in 3D and through the UVs), the stabilizer, and edge padding (islands exact, layers still restored beside a padded image). They print to the console; nothing is saved next to the model (the layer file test writes to `%TEMP%\Sable\selftest`) |
+| `--selftest` | Before the screenshot, run checks: test strokes, fill, box and lasso selection, flow build-up, hide undo, UV export and re-import, layers (blend modes, opacity, eraser, soft paint on a transparent layer, undo, the layer file round trip, merge down), resizing (2x nearest stays exact; a stroke after a resize and the resize both undo; redo), face and island fills, mirroring (in 3D and through the UVs), the stabilizer, edge padding (islands exact, layers still restored beside a padded image), bleeding a layer's edges, free transform (2x exact, quarter turn and flip exact, undo, cancel), and the Photoshop link (a PSD changed as Photoshop would comes back as one undo step, guide left out). They print to the console; nothing is saved next to the model (the layer file test writes to `%TEMP%\Sable\selftest`) |
 | `--frames N` | Quit after N frames, saving settings as a normal close does |
 | `--check model` | Print each submesh's triangles, flipped faces (winding against the normals), zero-area UVs and bounds, which materials' UVs overlap, and checks of the UV tools (islands, faces, coverage, padding timings); then quit. For finding out why part of a model won't paint |
 | `--link link.json` | Open a Blender link (the add-on does this) |
@@ -229,7 +235,7 @@ Environment: `SABLE_BLENDER` (the Blender to use), `SABLE_SETTINGS` (a different
 ## Code layout
 
 - `Model/`: loading, as plain CPU data (`ModelLoader`, `BlendConverter`, `LoadedModel`), submeshes (`Topology`), UV islands and faces (`UvIslands`), ray casts and nearest-surface queries (`Raycast`) and a triangle BVH per part (`TriangleBvh`) that they and brush dabs search.
-- `Paint/`: textures on the CPU (`PaintTexture`), their layers, blend modes and layer undo (`Layer`), resizing and its undo (`Resampler`), UV coverage (`UvRaster`), edge padding (`EdgePadding`), autosave and recovery (`Recovery`), the hidden layer file (`LayerFile`), strokes and the undo stack (`Stroke`), the pencil, brush, eraser and fill (`Brush`), and texel selections (`TexelSelection`, `SelectionMove`).
+- `Paint/`: textures on the CPU (`PaintTexture`), their layers, blend modes and layer undo (`Layer`), resizing and its undo (`Resampler`), free transform (`SelectionTransform`), PSD reading and writing (`Psd`), UV coverage (`UvRaster`), edge padding (`EdgePadding`), autosave and recovery (`Recovery`), the hidden layer file (`LayerFile`), strokes and the undo stack (`Stroke`), the pencil, brush, eraser and fill (`Brush`), and texel selections (`TexelSelection`, `SelectionMove`).
 - `Rendering/`: the raylib side: `GpuModel`, `LitShader`, `OutlineRenderer` (selection outline), `UvLayoutExport`, and `VisibilityStep` (undoable hiding).
 - `Views/`: the 3D view with its camera (`Viewport3D`, `OrbitCamera`) and the UV view (`UvView`).
 - `UI/`: the colour wheel, the palette (`Palette`) and the file browser (`FileBrowser`).
@@ -238,6 +244,6 @@ Environment: `SABLE_BLENDER` (the Blender to use), `SABLE_SETTINGS` (a different
 - `assets/icon/`: the app icon (`sable.svg`, PNG sizes, `sable.ico`).
 - `blender/`: the Sable Link add-on (`sable_link/`: `exporter.py` writes the GLB, `link.py` watches and launches) and its `build.py`. Sable's side is `Model/BlenderLink.cs` and `App.Link.cs`.
 - `installer/`: the Inno Setup script (`sable.iss`) and `build.py`.
-- `App.cs`: the window, tools, selection and panels. `App.Layers.cs`: the Layers window, the New texture dialog and the layer keys. `App.Strokes.cs`: mirroring, straight lines and the stabilizer. `App.Fill.cs`: island and face fills, edge padding. `App.Recovery.cs`: autosave and the recovery prompt. `App.Link.cs`: the Blender link. `EditorState.cs`: what's selected and shown. `Settings.cs`: what persists. `Program.cs`: the command line.
+- `App.cs`: the window, tools, selection and panels. `App.Layers.cs`: the Layers window, the New texture dialog and the layer keys. `App.Strokes.cs`: mirroring, straight lines and the stabilizer. `App.Fill.cs`: island and face fills, edge padding. `App.Recovery.cs`: autosave and the recovery prompt. `App.Transform.cs`: Ctrl+T. `App.Photoshop.cs`: the Photoshop link. `App.Link.cs`: the Blender link. `EditorState.cs`: what's selected and shown. `Settings.cs`: what persists. `Program.cs`: the command line.
 
 Built with .NET 9, [Raylib-cs](https://github.com/ChrisDill/Raylib-cs), [ImGui.NET](https://github.com/ImGuiNET/ImGui.NET) via [rlImGui-cs](https://github.com/raylib-extras/rlImGui-cs), and [AssimpNet](https://bitbucket.org/Starnick/assimpnet).

@@ -210,6 +210,7 @@ internal sealed partial class App : IDisposable
         {
             FinishLoad();
             UpdateLink();
+            UpdatePhotoshopLink();
             HandleDroppedFiles();
             profiler.Mark("load");
 
@@ -227,6 +228,7 @@ internal sealed partial class App : IDisposable
             var (sMin, sMax) = VisibleBounds();
             view3d.OrbitCenter = SelectionCenter();
             view3d.Update(rect3d, free && Raylib.CheckCollisionPointRec(pointer, rect3d), pointer, pointerDown, sMin, sMax, SpaceHeld && stroke == null);
+            uvView.InnerEdges = view3d.Wireframe;
             uvView.Update(rectUv, free && Raylib.CheckCollisionPointRec(pointer, rectUv), pointer, state, pointerDown, SpaceHeld && stroke == null);
             profiler.Mark("views");
             HandleShortcuts();
@@ -636,6 +638,12 @@ internal sealed partial class App : IDisposable
     private void HandleShortcuts()
     {
         if (ImGui.GetIO().WantCaptureKeyboard) return;
+        if (transform != null)
+        {
+            if (Raylib.IsKeyPressed(KeyboardKey.Enter) || Raylib.IsKeyPressed(KeyboardKey.KpEnter)) CommitTransform();
+            else if (Raylib.IsKeyPressed(KeyboardKey.Escape)) CancelTransform();
+            return;
+        }
         bool ctrl = Raylib.IsKeyDown(KeyboardKey.LeftControl) || Raylib.IsKeyDown(KeyboardKey.RightControl);
         bool shift = Raylib.IsKeyDown(KeyboardKey.LeftShift) || Raylib.IsKeyDown(KeyboardKey.RightShift);
         bool alt = Raylib.IsKeyDown(KeyboardKey.LeftAlt) || Raylib.IsKeyDown(KeyboardKey.RightAlt);
@@ -649,6 +657,7 @@ internal sealed partial class App : IDisposable
             if (Pressed(KeyboardKey.Z)) { EndStroke(); if (shift) undo.Redo(); else undo.Undo(); }
             if (Pressed(KeyboardKey.Y)) { EndStroke(); undo.Redo(); }
             if (Raylib.IsKeyPressed(KeyboardKey.D)) state.Selection = null;
+            if (Raylib.IsKeyPressed(KeyboardKey.T)) BeginTransform();
             HandleLayerShortcuts(shift);
             return;
         }
@@ -838,7 +847,7 @@ internal sealed partial class App : IDisposable
     /// <summary>The cursor for the current tool while it is over a view (or dragging); the system arrow elsewhere.</summary>
     private CursorIcon ToolIcon(bool free)
     {
-        if (SpaceHeld && stroke == null) return CursorIcon.System;
+        if (SpaceHeld && stroke == null || transform != null) return CursorIcon.System;
         bool overView = free && ((view3d.Hovered && !view3d.Navigating) || uvView.Hovered);
         if (!overView && stroke == null && lassoDrag == LassoDrag.None) return CursorIcon.System;
         switch (tool)
@@ -862,6 +871,7 @@ internal sealed partial class App : IDisposable
     private void UpdateTools(bool free, bool alt)
     {
         if (Model == null) return;
+        if (UpdateTransform(free)) return;
         var source = Model.Source;
         bool painting = tool is Tool.Pencil or Tool.Brush or Tool.Eraser;
         // Holding Alt turns any tool into the eyedropper until it's released.
@@ -1522,7 +1532,7 @@ internal sealed partial class App : IDisposable
 
     private void SetColor(Color c) => hsv = ColorWheel.RgbToHsv(new Vector3(c.R, c.G, c.B) / 255f, hsv.X);
 
-    private enum CursorIcon { System, Eyedropper, Pencil, Brush, Eraser, Lasso, Move, Fill, Zoom, Box }
+    private enum CursorIcon { System, Eyedropper, Pencil, Brush, Eraser, Lasso, Move, Fill, Zoom, Box, Rotate }
 
     /// <summary>Shows the system cursor, or hides it while a tool draws its own.</summary>
     /// <summary>Space held (and not typing): drags in either view navigate instead of using the tool.</summary>
@@ -1533,7 +1543,8 @@ internal sealed partial class App : IDisposable
     private void UpdateSystemCursor()
     {
         // The hand tool shows the move cursor over the views.
-        var shape = SpaceHeld && stroke == null && (view3d.Hovered || uvView.Hovered || view3d.Navigating) ? MouseCursor.ResizeAll : MouseCursor.Default;
+        var shape = transform != null ? TransformCursor
+            : SpaceHeld && stroke == null && (view3d.Hovered || uvView.Hovered || view3d.Navigating) ? MouseCursor.ResizeAll : MouseCursor.Default;
         if (shape != systemCursor) Raylib.SetMouseCursor(systemCursor = shape);
         if (shape != MouseCursor.Default) cursorIcon = CursorIcon.System;
         bool custom = cursorIcon != CursorIcon.System;
@@ -1564,6 +1575,7 @@ internal sealed partial class App : IDisposable
             case CursorIcon.Pencil: DrawPencilIcon(draw, cursorTip); break;
             case CursorIcon.Brush: DrawBrushIcon(draw, cursorTip); break;
             case CursorIcon.Eraser: DrawEraserIcon(draw, cursorTip); break;
+            case CursorIcon.Rotate: DrawRotateIcon(draw, cursorTip); break;
             case CursorIcon.Lasso: DrawLassoIcon(draw, cursorTip); break;
             case CursorIcon.Move: DrawMoveIcon(draw, cursorTip); break;
             case CursorIcon.Fill: DrawBucketIcon(draw, cursorTip); break;
@@ -1833,6 +1845,9 @@ internal sealed partial class App : IDisposable
             if (ImGui.MenuItem("Duplicate layer", "Ctrl+J", false, layers)) DuplicateLayer();
             if (ImGui.MenuItem("Merge layer down", "Ctrl+E", false, layers && ActiveTextureObject!.ActiveLayerIndex > 0)) MergeLayerDown();
             if (ImGui.MenuItem("Bleed edges of layer...", null, false, layers)) openBleed = true;
+            ImGui.Separator();
+            if (ImGui.MenuItem("Edit in Photoshop", null, false, layers)) EditInPhotoshop();
+            if (ImGui.MenuItem("Stop Photoshop link", null, false, PhotoshopLinked)) StopPhotoshopLink();
             ImGui.EndMenu();
         }
         if (ImGui.BeginMenu("View"))
@@ -2112,6 +2127,17 @@ internal sealed partial class App : IDisposable
         ImGui.SameLine();
         ImGui.TextDisabled("|");
         ImGui.SameLine();
+        if (transform != null)
+        {
+            DrawTransformToolbar();
+            ImGui.End();
+            return;
+        }
+        if (state.ActiveSelection != null)
+        {
+            if (ImGui.Button("Transform (Ctrl+T)")) BeginTransform();
+            ImGui.SameLine();
+        }
         if (ImGui.Button("New texture...")) OpenNewTexture();
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("A new image for one of the active object's materials");
         ImGui.SameLine();
@@ -2429,6 +2455,8 @@ internal sealed partial class App : IDisposable
                 if (state.ActiveTexture >= 0) SelfTestResize(Model.Textures[state.ActiveTexture]);
                 SelfTestStrokes();
                 if (state.ActiveTexture >= 0) SelfTestPadding(Model.Textures[state.ActiveTexture]);
+                if (state.ActiveTexture >= 0) SelfTestTransform(Model.Textures[state.ActiveTexture]);
+                if (state.ActiveTexture >= 0) SelfTestPhotoshop(Model.Textures[state.ActiveTexture]);
 
                 tool = Tool.Brush;
                 Console.WriteLine($"[selftest] undo available: {undo.CanUndo}; dirty textures: {Model.Textures.Count(t => t.Dirty)}");

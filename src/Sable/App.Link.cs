@@ -24,7 +24,7 @@ internal sealed partial class App
     {
         if (Model?.Source.LinkPath is not { } path) return;
         RunLinkTest();
-        bool busy = stroke != null || lassoDrag != LassoDrag.None || zoomDrag != ZoomDrag.None;
+        bool busy = stroke != null || lassoDrag != LassoDrag.None || zoomDrag != ZoomDrag.None || transform != null;
 
         if (linkRefresh is { IsCompleted: true } task)
         {

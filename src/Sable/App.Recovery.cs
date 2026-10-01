@@ -28,7 +28,7 @@ internal sealed partial class App
     {
         if (!RecoveryEnabled) return;
         RunRecoveryTest();
-        bool busy = stroke != null || lassoDrag != LassoDrag.None || layerDragBefore != null || zoomDrag != ZoomDrag.None;
+        bool busy = stroke != null || lassoDrag != LassoDrag.None || layerDragBefore != null || zoomDrag != ZoomDrag.None || transform != null;
         autosaver.Tick(Model, Raylib.GetTime(), busy);
     }
 
