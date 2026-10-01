@@ -15,6 +15,8 @@ namespace Sable;
 internal sealed partial class App
 {
     private const string GuideLayerName = "UV guide (Sable)";
+    /// <summary>The smoothness mask's name in the PSD, by which it comes back as the mask.</summary>
+    private const string MaskLayerName = "Smoothness (Sable mask)";
 
     private PaintTexture? photoshopTexture;
     private string? photoshopPath;
@@ -89,7 +91,7 @@ internal sealed partial class App
             int index = Model.Textures.IndexOf(texture);
             var parts = Enumerable.Range(0, Model.Source.Parts.Count).Where(p => Model.TextureOf(p) == index);
             var guide = UvLayoutExport.Lines(Model, parts, texture.Width, texture.Height, Color.White);
-            var layers = texture.Layers.Select(l => new PsdLayer(l.Name, l.Pixels, l.Visible, l.Opacity, l.Blend)).ToList();
+            var layers = texture.Layers.Select(l => new PsdLayer(l.IsMask ? MaskLayerName : l.Name, l.Pixels, l.Visible, l.Opacity, l.Blend)).ToList();
             layers.Add(new PsdLayer(GuideLayerName, guide, true, 0.6f, BlendMode.Normal, Locked: true));
             texture.EnsureComposite();
             Psd.Write(path, texture.Width, texture.Height, layers, texture.Composite);
@@ -174,7 +176,8 @@ internal sealed partial class App
 
     /// <summary>
     /// Replaces the linked texture's layers with the PSD's (the UV guide left out): layers keep their place by name,
-    /// layers added in Photoshop are added, layers deleted there go. One undo step.
+    /// layers added in Photoshop are added, layers deleted there go. The layer named <see cref="MaskLayerName"/> comes
+    /// back as the smoothness mask (on top, wherever it was put). One undo step.
     /// </summary>
     private void ApplyPhotoshop(PsdDocument document)
     {
@@ -194,9 +197,12 @@ internal sealed partial class App
 
         bool sableChanged = texture.Version != photoshopSentVersion;
         string activeName = texture.ActiveLayer.Name;
-        var layers = incoming.Select(l => new Layer(l.Name, l.Pixels) { Visible = l.Visible, Opacity = l.Opacity, Blend = l.Blend }).ToList();
-        int active = Math.Max(0, layers.FindLastIndex(l => l.Name == activeName));
-        if (layers.All(l => l.Name != activeName)) active = layers.Count - 1;
+        bool activeMask = texture.ActiveLayer.IsMask;
+        var layers = PaintTexture.ArrangeMask(incoming.Select(l => l.Name == MaskLayerName
+            ? new Layer(Layer.SmoothnessName, l.Pixels) { Visible = l.Visible, Opacity = l.Opacity, Kind = LayerKind.Smoothness }
+            : new Layer(l.Name, l.Pixels) { Visible = l.Visible, Opacity = l.Opacity, Blend = l.Blend }));
+        int active = Math.Max(0, layers.FindLastIndex(l => l.Name == activeName && l.IsMask == activeMask));
+        if (layers.All(l => l.Name != activeName || l.IsMask != activeMask)) active = layers.Count - 1;
         LayerEdit(texture, () =>
         {
             texture.Layers.Clear();

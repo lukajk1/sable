@@ -40,6 +40,8 @@ internal sealed class Settings
     public bool LayersOpen { get; set; } = true;
     /// <summary>The file browser's recent folders, newest first.</summary>
     public List<string>? RecentFolders { get; set; }
+    /// <summary>Where each texture (by the image it saves to) was last exported as a Unity material: the .mat's path.</summary>
+    public Dictionary<string, string>? UnityExports { get; set; }
 
     // Window (0 = leave to the default).
     public int WindowX { get; set; }

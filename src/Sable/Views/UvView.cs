@@ -113,8 +113,12 @@ public sealed class UvView : IDisposable
         if (model != null && state.ActiveTexture >= 0)
         {
             DrawChecker(area);
-            var texture = model.Textures[state.ActiveTexture].Gpu;
+            var paint = model.Textures[state.ActiveTexture];
+            var texture = paint.Gpu;
             Raylib.DrawTexturePro(texture, new Rectangle(0, 0, texture.Width, texture.Height), area, Vector2.Zero, 0, Color.White);
+            // The smoothness mask, while shown: red at half strength where painted, as in the 3D view.
+            if (paint.Mask is { Visible: true } && paint.MaskGpu.Id != 0)
+                Raylib.DrawTexturePro(paint.MaskGpu, new Rectangle(0, 0, texture.Width, texture.Height), area, Vector2.Zero, 0, new Color(255, 31, 31, 128));
             if (PixelGrid && zoom >= 6f) DrawTexelGrid(area);
         }
         else

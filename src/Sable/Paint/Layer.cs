@@ -6,6 +6,13 @@ namespace Sable.Paint;
 public enum BlendMode { Normal, Multiply, Screen, Overlay, Add }
 
 /// <summary>
+/// What a layer is for. <see cref="Smoothness"/>: the texture's smoothness mask, at most one, kept at the top of the
+/// stack and left out of the colour. Its texels' alpha says where the surface is smooth, and its
+/// <see cref="Layer.Opacity"/> how smooth fully painted texels are; the colour painted on it doesn't matter.
+/// </summary>
+public enum LayerKind { Normal, Smoothness }
+
+/// <summary>
 /// One layer of a <see cref="PaintTexture"/>: its own RGBA pixels (straight alpha, row 0 at the top), shown over
 /// the layers below it at <see cref="Opacity"/> with <see cref="Blend"/>.
 /// </summary>
@@ -17,6 +24,14 @@ public sealed class Layer
     /// <summary>0..1, on top of each texel's own alpha.</summary>
     public float Opacity { get; set; } = 1f;
     public BlendMode Blend { get; set; }
+    public LayerKind Kind { get; init; }
+    /// <summary>The smoothness mask: not part of the colour (see <see cref="LayerKind.Smoothness"/>).</summary>
+    public bool IsMask => Kind == LayerKind.Smoothness;
+
+    /// <summary>The smoothness mask's name in Sable; it can't be renamed.</summary>
+    public const string SmoothnessName = "Smoothness";
+    /// <summary>A new mask's smoothness where fully painted (its opacity).</summary>
+    public const float DefaultSmoothness = 0.8f;
 
     public Layer(string name, Color[] pixels)
     {
@@ -26,7 +41,11 @@ public sealed class Layer
 
     public static Layer Transparent(string name, int width, int height) => new(name, new Color[width * height]);
 
-    public Layer Clone(string name) => new(name, (Color[])Pixels.Clone()) { Visible = Visible, Opacity = Opacity, Blend = Blend };
+    public Layer Clone(string name) => WithPixels((Color[])Pixels.Clone(), name);
+
+    /// <summary>A new layer with this one's settings and kind, holding <paramref name="pixels"/>.</summary>
+    public Layer WithPixels(Color[] pixels, string? name = null) =>
+        new(name ?? Name, pixels) { Visible = Visible, Opacity = Opacity, Blend = Blend, Kind = Kind };
 
     /// <summary>Plain: a single visible layer like this shows its pixels exactly as they are.</summary>
     public bool IsPlain => Visible && Opacity >= 1f && Blend == BlendMode.Normal;
@@ -39,11 +58,11 @@ public static class Compositor
 {
     /// <summary>
     /// Writes rows <paramref name="y0"/>..<paramref name="y1"/>, columns <paramref name="x0"/>..<paramref name="x1"/>
-    /// (inclusive) of the flattened layers into <paramref name="output"/>.
+    /// (inclusive) of the flattened layers into <paramref name="output"/>. The smoothness mask isn't colour, so it's left out.
     /// </summary>
     public static void Composite(IReadOnlyList<Layer> layers, Color[] output, int width, int x0, int y0, int x1, int y1)
     {
-        var visible = layers.Where(l => l.Visible && l.Opacity > 0f).ToArray();
+        var visible = layers.Where(l => l.Visible && l.Opacity > 0f && !l.IsMask).ToArray();
         int w = x1 - x0 + 1;
         if (visible.Length == 0)
         {

@@ -149,7 +149,7 @@ public sealed class Viewport3D : IDisposable
         if (model != null)
         {
             // Light from over the viewer's left shoulder, like Blender's solid view.
-            shader.Set(Camera.Forward * 0.7f - Camera.Up * 0.6f + Camera.Right * 0.4f, Shade);
+            shader.Set(Camera.Forward * 0.7f - Camera.Up * 0.6f + Camera.Right * 0.4f, Shade, Camera.Position);
             for (int i = 0; i < model.Source.Parts.Count; i++)
                 if (state.PartVisible(i)) model.DrawPart(i);
 

@@ -94,7 +94,19 @@ internal sealed partial class App
     }
 
     private void NewLayer() => OnActiveLayers(t => t.InsertLayer(Layer.Transparent(t.NextLayerName(), t.Width, t.Height)));
-    private void DuplicateLayer() => OnActiveLayers(t => t.InsertLayer(t.ActiveLayer.Clone($"{t.ActiveLayer.Name} copy")));
+    private void DuplicateLayer() => OnActiveLayers(t =>
+    {
+        if (!t.ActiveLayer.IsMask) t.InsertLayer(t.ActiveLayer.Clone($"{t.ActiveLayer.Name} copy"));
+    });
+
+    /// <summary>Adds the texture's smoothness mask (one per texture) on top, ready to paint.</summary>
+    private void NewSmoothnessMask()
+    {
+        if (ActiveTextureObject is not { Mask: null } texture) return;
+        LayerEdit(texture, texture.AddSmoothnessMask);
+        SetStatus($"Added a smoothness mask to {texture.Name}: paint where it's smooth (any colour; the alpha counts). "
+                  + "File > Export Unity material writes it as the smoothness map.", error: false);
+    }
     private void MergeLayerDown() => OnActiveLayers(t => t.MergeDown());
 
     /// <summary>Ctrl+Shift+N new layer, Ctrl+J duplicate, Ctrl+E merge down (Photoshop's keys).</summary>
@@ -156,19 +168,29 @@ internal sealed partial class App
         var before = texture.Snapshot();
         var active = texture.ActiveLayer;
 
-        ImGui.SetNextItemWidth(110);
-        int blend = (int)active.Blend;
-        if (ImGui.Combo("##blend", ref blend, Layer.BlendNames, Layer.BlendNames.Length))
-            LayerEdit(texture, () => active.Blend = (BlendMode)blend);
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("How this layer mixes with the ones below.");
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(-1);
-        float percent = active.Opacity * 100f;
-        if (ImGui.SliderFloat("##opacity", ref percent, 0f, 100f, "%.0f%%"))
+        // The mask has no blend mode, and its opacity is the smoothness where it's fully painted.
+        bool changed;
+        if (active.IsMask)
         {
-            active.Opacity = percent / 100f;
-            texture.Touch();
+            ImGui.SetNextItemWidth(-1);
+            float smoothness = active.Opacity;
+            changed = ImGui.SliderFloat("##smoothness", ref smoothness, 0f, 1f, "Smoothness %.2f");
+            if (changed) active.Opacity = smoothness;
         }
+        else
+        {
+            ImGui.SetNextItemWidth(110);
+            int blend = (int)active.Blend;
+            if (ImGui.Combo("##blend", ref blend, Layer.BlendNames, Layer.BlendNames.Length))
+                LayerEdit(texture, () => active.Blend = (BlendMode)blend);
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("How this layer mixes with the ones below.");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(-1);
+            float percent = active.Opacity * 100f;
+            changed = ImGui.SliderFloat("##opacity", ref percent, 0f, 100f, "%.0f%%");
+            if (changed) active.Opacity = percent / 100f;
+        }
+        if (changed) texture.Touch();
         // A drag is one undo step, from where it started.
         if (ImGui.IsItemActivated()) layerDragBefore = before;
         if (ImGui.IsItemDeactivated() && layerDragBefore != null)
@@ -177,7 +199,8 @@ internal sealed partial class App
             if (!layerDragBefore.SameAs(after)) undo.Push(new LayerStep(texture, layerDragBefore, after));
             layerDragBefore = null;
         }
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Layer opacity");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(active.IsMask ? "Smoothness where the mask is fully painted (Unity's Smoothness); unpainted is 0" : "Layer opacity");
 
         float rows = MathF.Min(texture.Layers.Count, LayerRows) * (ThumbSize + ImGui.GetStyle().ItemSpacing.Y) + ImGui.GetStyle().WindowPadding.Y * 2 + ImGui.GetStyle().ItemSpacing.Y;
         ImGui.BeginChild("##layerlist", new Vector2(0, rows), ImGuiChildFlags.Borders,
@@ -212,8 +235,12 @@ internal sealed partial class App
             else
             {
                 string label = layer.Name;
-                if (layer.Blend != BlendMode.Normal) label += $"  {layer.Blend}";
-                if (layer.Opacity < 1f) label += $"  {layer.Opacity * 100f:0}%";
+                if (layer.IsMask) label += $"  mask {layer.Opacity:0.00}";
+                else
+                {
+                    if (layer.Blend != BlendMode.Normal) label += $"  {layer.Blend}";
+                    if (layer.Opacity < 1f) label += $"  {layer.Opacity * 100f:0}%";
+                }
                 // The whole row (thumbnail and name) is one selectable; the thumbnail and name are drawn over it.
                 var at = ImGui.GetCursorScreenPos();
                 bool clicked = ImGui.Selectable("##layer", i == texture.ActiveLayerIndex, ImGuiSelectableFlags.AllowDoubleClick, new Vector2(0, ThumbSize));
@@ -226,13 +253,14 @@ internal sealed partial class App
                 {
                     EndStroke();
                     texture.ActiveLayerIndex = i;
-                    if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                    if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left) && !layer.IsMask)
                     {
                         renamingLayer = i;
                         renameBuffer = layer.Name;
                     }
                 }
-                if (ImGui.IsItemHovered()) ImGui.SetTooltip("Click to paint on it, double-click to rename");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(layer.IsMask ? "The smoothness mask: click to paint on it. Not part of the colour" : "Click to paint on it, double-click to rename");
             }
             ImGui.PopID();
         }
@@ -247,24 +275,30 @@ internal sealed partial class App
             ImGui.SameLine();
             return clicked;
         }
-        int index = texture.ActiveLayerIndex, count = texture.Layers.Count;
+        int count = texture.Layers.Count;
         if (Button("New", "New transparent layer above this one (Ctrl+Shift+N)")) NewLayer();
-        if (Button("Copy", "Duplicate this layer (Ctrl+J)")) DuplicateLayer();
-        if (Button("Del", "Delete this layer", count > 1)) LayerEdit(texture, texture.DeleteActiveLayer);
-        if (Button("Up", "Move up", index < count - 1)) LayerEdit(texture, () => texture.MoveActiveLayer(1));
-        if (Button("Dn", "Move down", index > 0)) LayerEdit(texture, () => texture.MoveActiveLayer(-1));
+        if (Button("Copy", "Duplicate this layer (Ctrl+J)", !active.IsMask)) DuplicateLayer();
+        if (Button("Del", "Delete this layer", texture.CanDeleteActiveLayer)) LayerEdit(texture, texture.DeleteActiveLayer);
+        if (Button("Up", "Move up", texture.CanMoveActiveLayer(1))) LayerEdit(texture, () => texture.MoveActiveLayer(1));
+        if (Button("Dn", "Move down", texture.CanMoveActiveLayer(-1))) LayerEdit(texture, () => texture.MoveActiveLayer(-1));
         ImGui.NewLine();
-        if (Button("Merge down", "Merge this layer into the one below (Ctrl+E)", index > 0)) MergeLayerDown();
-        if (Button("Flatten", "Merge every layer into one", count > 1)) LayerEdit(texture, texture.Flatten);
+        if (Button("Merge down", "Merge this layer into the one below (Ctrl+E)", texture.CanMergeDown)) MergeLayerDown();
+        if (Button("Flatten", "Merge every colour layer into one (the smoothness mask stays)", texture.ColorLayerCount > 1)) LayerEdit(texture, texture.Flatten);
         if (Button("Bleed...", "Grow this layer's colour outward from the UV islands")) openBleed = true;
+        ImGui.NewLine();
+        if (Button("Smoothness mask", "Add a smoothness mask on top (one per texture): paint where the surface is smooth.\n"
+                                      + "It shows red and stays out of the colour; File > Export Unity material writes it\n"
+                                      + "as the material's smoothness map", texture.Mask == null)) NewSmoothnessMask();
         ImGui.NewLine();
         if (Button("Edit in Photoshop", "Open these layers in Photoshop as a PSD (with the UV layout as a guide layer);\nevery save there comes back here as one undo step")) EditInPhotoshop();
         ImGui.NewLine();
         DrawPhotoshopLinkStatus(texture);
         ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);
-        ImGui.TextWrapped(count > 1 || texture.HasLayers
-            ? "Ctrl+S saves the flattened image, and the layers beside it in a hidden .sable file."
-            : "Paint goes to the selected layer. Saving writes the flattened image.");
+        ImGui.TextWrapped(active.IsMask
+            ? "Paint where it's smooth: the alpha counts, not the colour. Hiding it only hides the red."
+            : count > 1 || texture.HasLayers
+                ? "Ctrl+S saves the flattened image, and the layers beside it in a hidden .sable file."
+                : "Paint goes to the selected layer. Saving writes the flattened image.");
         ImGui.PopStyleColor();
         ImGui.End();
     }
@@ -293,6 +327,7 @@ internal sealed partial class App
         int offsetX = (ThumbSize - contentW) / 2, offsetY = (ThumbSize - contentH) / 2;
         int grid = Math.Clamp((int)MathF.Ceiling(scale), 1, 4);
         var pixels = layer.Pixels;
+        bool mask = layer.IsMask;
         Array.Clear(thumbnailPixels);
         for (int ty = 0; ty < contentH; ty++)
         for (int tx = 0; tx < contentW; tx++)
@@ -305,6 +340,8 @@ internal sealed partial class App
                 int x = Math.Min(texture.Width - 1, (int)((tx + (sx + 0.5f) / grid) * scale));
                 int y = Math.Min(texture.Height - 1, (int)((ty + (sy + 0.5f) / grid) * scale));
                 var c = pixels[y * texture.Width + x];
+                // The mask shows red, as in the views: only its alpha means anything.
+                if (mask) c = new Color((byte)255, (byte)31, (byte)31, c.A);
                 float ca = c.A / 255f;
                 r += c.R * ca; g += c.G * ca; b += c.B * ca; a += ca;
             }

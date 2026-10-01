@@ -36,6 +36,8 @@ public static unsafe class LayerFile
         public bool Visible { get; set; } = true;
         public float Opacity { get; set; } = 1f;
         public string Blend { get; set; } = nameof(BlendMode.Normal);
+        /// <summary>A <see cref="LayerKind"/>; files from before the smoothness mask have none (Normal).</summary>
+        public string Kind { get; set; } = nameof(LayerKind.Normal);
         public string File { get; set; } = "";
     }
 
@@ -61,7 +63,7 @@ public static unsafe class LayerFile
         try
         {
             WriteZip(temp, texture.Width, texture.Height, texture.ActiveLayerIndex,
-                texture.Layers.Select(l => new LayerData(l.Name, l.Visible, l.Opacity, l.Blend, l.Pixels)).ToArray(),
+                texture.Layers.Select(l => new LayerData(l.Name, l.Visible, l.Opacity, l.Blend, l.Pixels, l.Kind)).ToArray(),
                 imageHash: ImageHash(written));
             ReplaceWithRetry(temp, path);
         }
@@ -155,7 +157,10 @@ public static unsafe class LayerFile
         {
             var layer = layers[i];
             string file = $"layer{i}.png";
-            manifest.Layers.Add(new Entry { Name = layer.Name, Visible = layer.Visible, Opacity = layer.Opacity, Blend = layer.Blend.ToString(), File = file });
+            manifest.Layers.Add(new Entry
+            {
+                Name = layer.Name, Visible = layer.Visible, Opacity = layer.Opacity, Blend = layer.Blend.ToString(), Kind = layer.Kind.ToString(), File = file,
+            });
             // PNG already compresses; don't compress twice.
             using var stream = zip.CreateEntry(file, CompressionLevel.NoCompression).Open();
             if (fast) WritePngFast(stream, layer.Pixels, width, height);
@@ -191,10 +196,13 @@ public static unsafe class LayerFile
                 Visible = entry.Visible,
                 Opacity = Math.Clamp(entry.Opacity, 0f, 1f),
                 Blend = Enum.TryParse<BlendMode>(entry.Blend, out var blend) ? blend : BlendMode.Normal,
+                Kind = Enum.TryParse<LayerKind>(entry.Kind, out var kind) ? kind : LayerKind.Normal,
             });
         }
+        var active = layers[Math.Clamp(manifest.Active, 0, layers.Count - 1)];
+        layers = PaintTexture.ArrangeMask(layers);
         var state = new LayerState(layers.ToArray(), layers.Select(l => (l.Name, l.Visible, l.Opacity, l.Blend)).ToArray(),
-            Math.Clamp(manifest.Active, 0, layers.Count - 1));
+            Math.Max(0, layers.IndexOf(active)));
         return (manifest.Width, manifest.Height, state);
     }
 
@@ -227,7 +235,7 @@ public static unsafe class LayerFile
     }
 
     /// <summary>PNG bytes from raylib's encoder (stb_image_write), in memory: no GPU and no temporary file.</summary>
-    private static byte[] EncodePng(Color[] pixels, int width, int height)
+    internal static byte[] EncodePng(Color[] pixels, int width, int height)
     {
         int size = 0;
         byte* data;
@@ -325,4 +333,5 @@ public static unsafe class LayerFile
 }
 
 /// <summary>One layer as a layer zip keeps it: its settings, and its pixels (row 0 at the top).</summary>
-public readonly record struct LayerData(string Name, bool Visible, float Opacity, BlendMode Blend, Color[] Pixels);
+public readonly record struct LayerData(string Name, bool Visible, float Opacity, BlendMode Blend, Color[] Pixels,
+    LayerKind Kind = LayerKind.Normal);

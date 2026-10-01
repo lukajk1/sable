@@ -610,7 +610,7 @@ public sealed class Autosaver
             {
                 // Not zeroed first: the copy overwrites all of it.
                 layers = t.Layers.Select(l => new LayerData(l.Name, l.Visible, l.Opacity, l.Blend,
-                    GC.AllocateUninitializedArray<Color>(l.Pixels.Length))).ToArray();
+                    GC.AllocateUninitializedArray<Color>(l.Pixels.Length), l.Kind)).ToArray();
                 for (int i = 0; i < layers.Length; i++) copies.Add((t.Layers[i].Pixels, layers[i].Pixels));
             }
             textures.Add(new SnapshotTexture(mark, t.Name, t.FilePath, t.Width, t.Height, t.Layers.Count, materials,

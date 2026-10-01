@@ -63,11 +63,20 @@ internal sealed partial class App
     private Color[] PaddedPixels(PaintTexture texture)
     {
         texture.EnsureComposite();
+        return PadToIslands(texture, texture.Composite);
+    }
+
+    /// <summary>
+    /// <paramref name="pixels"/> (the texture's size) bled <see cref="edgePadding"/> texels past the UV islands of
+    /// every part that uses the texture, or as they are without padding or UVs.
+    /// </summary>
+    private Color[] PadToIslands(PaintTexture texture, Color[] pixels)
+    {
         int index = Model!.Textures.IndexOf(texture);
-        if (edgePadding <= 0 || index < 0) return texture.Composite;
+        if (edgePadding <= 0 || index < 0) return pixels;
         var inside = UvRaster.Coverage(Model.Source, p => Model.TextureOf(p) == index, texture.Width, texture.Height);
-        if (!inside.Contains(true)) return texture.Composite;
-        return EdgePadding.Pad(texture.Composite, texture.Width, texture.Height, inside, edgePadding);
+        if (!inside.Contains(true)) return pixels;
+        return EdgePadding.Pad(pixels, texture.Width, texture.Height, inside, edgePadding);
     }
 
     // ---------- bleed edges ----------
@@ -95,8 +104,7 @@ internal sealed partial class App
         int changed = 0;
         for (int i = 0; i < bled.Length; i++) if (!bled[i].Equals(layer.Pixels[i])) changed++;
         // A new layer object with the result, so the layer undo step can swap the old one back.
-        LayerEdit(texture, () => texture.Layers[texture.ActiveLayerIndex] =
-            new Layer(layer.Name, bled) { Visible = layer.Visible, Opacity = layer.Opacity, Blend = layer.Blend });
+        LayerEdit(texture, () => texture.Layers[texture.ActiveLayerIndex] = layer.WithPixels(bled));
         SetStatus($"Bled {layer.Name} {texels} texel{(texels == 1 ? "" : "s")} past the UV islands ({changed} texels changed).", error: false);
     }
 

@@ -473,14 +473,14 @@ internal sealed partial class App : IDisposable
     private string? ModelDirectory => Model != null ? Path.GetDirectoryName(Model.Source.SourcePath) : null;
 
     /// <summary>Asks for a file with Sable's own browser, then runs <paramref name="then"/> on it (errors go to the status bar).</summary>
-    private void Pick(bool save, string title, string filter, string? fileName, Action<string> then)
+    private void Pick(bool save, string title, string filter, string? fileName, Action<string> then, string? openIn = null)
     {
         if (fileBrowser.IsOpen) return;
         fileBrowser.Open(save, title, filter, ModelDirectory, fileName, path =>
         {
             try { then(path); }
             catch (Exception e) { SetStatus(e.Message, error: true); }
-        });
+        }, openIn);
     }
 
     private void OpenDialog() => Pick(false, "Open model", FileBrowser.ModelFilter, null, StartLoad);
@@ -1810,6 +1810,7 @@ internal sealed partial class App : IDisposable
             if (ImGui.MenuItem("Import image as layer...", null, false, hasTexture)) ImportImageAsLayer();
             if (ImGui.MenuItem("Import image into texture...", null, false, hasTexture)) ImportImage();
             if (ImGui.MenuItem("Export texture as...", null, false, hasTexture)) ExportTexture();
+            DrawUnityExportMenuItems(hasTexture);
             if (ImGui.BeginMenu("Export UV layout", Model != null))
             {
                 foreach (bool over in new[] { false, true })
@@ -1838,7 +1839,8 @@ internal sealed partial class App : IDisposable
             bool layers = ActiveTextureObject != null;
             if (ImGui.MenuItem("New layer", "Ctrl+Shift+N", false, layers)) NewLayer();
             if (ImGui.MenuItem("Duplicate layer", "Ctrl+J", false, layers)) DuplicateLayer();
-            if (ImGui.MenuItem("Merge layer down", "Ctrl+E", false, layers && ActiveTextureObject!.ActiveLayerIndex > 0)) MergeLayerDown();
+            if (ImGui.MenuItem("Merge layer down", "Ctrl+E", false, layers && ActiveTextureObject!.CanMergeDown)) MergeLayerDown();
+            if (ImGui.MenuItem("New smoothness mask", null, false, layers && ActiveTextureObject!.Mask == null)) NewSmoothnessMask();
             if (ImGui.MenuItem("Bleed edges of layer...", null, false, layers)) openBleed = true;
             ImGui.Separator();
             if (ImGui.MenuItem("Edit in Photoshop", null, false, layers)) EditInPhotoshop();
@@ -2453,6 +2455,7 @@ internal sealed partial class App : IDisposable
                 if (state.ActiveTexture >= 0) SelfTestPadding(Model.Textures[state.ActiveTexture]);
                 if (state.ActiveTexture >= 0) SelfTestTransform(Model.Textures[state.ActiveTexture]);
                 if (state.ActiveTexture >= 0) SelfTestPhotoshop(Model.Textures[state.ActiveTexture]);
+                if (state.ActiveTexture >= 0) SelfTestSmoothness(Model.Textures[state.ActiveTexture]);
 
                 tool = Tool.Brush;
                 Console.WriteLine($"[selftest] undo available: {undo.CanUndo}; dirty textures: {Model.Textures.Count(t => t.Dirty)}");
@@ -2526,6 +2529,8 @@ internal sealed partial class App : IDisposable
         mirrorX = saved.MirrorX;
         smoothing = Math.Clamp(saved.Smoothing, 0f, 1f);
         if (saved.RecentFolders != null) fileBrowser.RecentFolders.AddRange(saved.RecentFolders.Where(Directory.Exists).Take(8));
+        if (saved.UnityExports != null)
+            foreach (var (texture, material) in saved.UnityExports) unityExports[texture] = material;
         layersOpen = saved.LayersOpen;
 
         // Only restore a window placement that is still on a monitor.
@@ -2574,6 +2579,7 @@ internal sealed partial class App : IDisposable
             MirrorX = mirrorX,
             Smoothing = smoothing,
             RecentFolders = fileBrowser.RecentFolders.ToList(),
+            UnityExports = new Dictionary<string, string>(unityExports),
             LayersOpen = layersOpen,
             WindowMaximized = Raylib.IsWindowMaximized(),
         };

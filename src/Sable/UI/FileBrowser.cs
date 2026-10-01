@@ -36,8 +36,12 @@ internal sealed class FileBrowser
     private bool scrollToTop;
     private Action<string>? onChosen;
 
-    /// <summary>Shows the browser. <paramref name="onChosen"/> gets the full path of the file picked.</summary>
-    public void Open(bool save, string title, string filter, string? startDirectory, string? fileName, Action<string> onChosen)
+    /// <summary>
+    /// Shows the browser. <paramref name="onChosen"/> gets the full path of the file picked. It opens in
+    /// <paramref name="openIn"/> when that folder exists, else in <paramref name="startDirectory"/> (the model's folder,
+    /// also listed under Places).
+    /// </summary>
+    public void Open(bool save, string title, string filter, string? startDirectory, string? fileName, Action<string> onChosen, string? openIn = null)
     {
         this.save = save;
         this.title = title;
@@ -48,7 +52,7 @@ internal sealed class FileBrowser
         error = null;
         confirmOverwrite = null;
         extraPlace = startDirectory;
-        string start = new[] { startDirectory, RecentFolders.FirstOrDefault(), Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments) }
+        string start = new[] { openIn, startDirectory, RecentFolders.FirstOrDefault(), Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments) }
             .FirstOrDefault(d => !string.IsNullOrEmpty(d) && Directory.Exists(d)) ?? Path.GetPathRoot(Environment.SystemDirectory)!;
         Navigate(start);
         pendingOpen = true;

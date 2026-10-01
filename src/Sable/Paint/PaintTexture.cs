@@ -25,6 +25,13 @@ public sealed unsafe class PaintTexture : IDisposable
     public Color[] Composite { get; private set; }
     public Texture2D Gpu => gpu;
     private Texture2D gpu;
+    /// <summary>
+    /// The smoothness mask on the GPU, white with the mask's alpha (Id 0 while there's no mask), for the views to tint
+    /// red and the 3D view's highlights. Uploaded with the composite.
+    /// </summary>
+    public Texture2D MaskGpu => maskGpu;
+    private Texture2D maskGpu;
+    private Color[]? maskScratch;
     private TextureView view = TextureView.Pixel;
     private bool mipmapped;
     /// <summary>Where saving writes. Null until a path is chosen (embedded or newly created textures).</summary>
@@ -73,6 +80,7 @@ public sealed unsafe class PaintTexture : IDisposable
             strokeBefore = null;
             strokeCoverage = null;
             uploadScratch = null;
+            maskScratch = null;
             dirtyX0 = dirtyY0 = int.MaxValue;
             dirtyX1 = dirtyY1 = -1;
             Raylib.UnloadTexture(gpu);
@@ -97,8 +105,7 @@ public sealed unsafe class PaintTexture : IDisposable
     {
         var before = Snapshot();
         int oldWidth = Width, oldHeight = Height;
-        var layers = Layers.Select(l => new Layer(l.Name, Resampler.Resample(l.Pixels, Width, Height, width, height, smooth))
-            { Visible = l.Visible, Opacity = l.Opacity, Blend = l.Blend }).ToArray();
+        var layers = Layers.Select(l => l.WithPixels(Resampler.Resample(l.Pixels, Width, Height, width, height, smooth))).ToArray();
         var after = new LayerState(layers, before.Settings, before.Active);
         SetContents(width, height, after);
         return new ResizeStep(this, oldWidth, oldHeight, before, width, height, after);
@@ -133,7 +140,11 @@ public sealed unsafe class PaintTexture : IDisposable
                 Raylib.SetTextureFilter(gpu, TextureFilter.Anisotropic16X);
                 break;
         }
+        if (maskGpu.Id != 0) Raylib.SetTextureFilter(maskGpu, MaskFilter);
     }
+
+    // The mask has no mipmaps: bilinear stands in for both smooth views.
+    private TextureFilter MaskFilter => view == TextureView.Pixel ? TextureFilter.Point : TextureFilter.Bilinear;
 
     // rlgl's RL_TEXTURE_FILTER_ANISOTROPIC: raylib has no way to turn anisotropy back down, so set it directly.
     private const int AnisotropyParameter = 0x3000;
@@ -230,9 +241,46 @@ public sealed unsafe class PaintTexture : IDisposable
         }
         // Smaller mip levels are built from the top one, so they go stale as soon as it changes.
         if (mipmapped) Raylib.GenTextureMipmaps(ref gpu);
+        UploadMask(uploadAll || dirtyX1 < 0, dirtyX0, dirtyY0, w, h);
         needsUpload = uploadAll = compositeCurrent = false;
         dirtyX0 = dirtyY0 = int.MaxValue;
         dirtyX1 = dirtyY1 = -1;
+    }
+
+    /// <summary>
+    /// Sends the changed rectangle of the smoothness mask to <see cref="MaskGpu"/> as white with the mask's alpha,
+    /// making the GPU texture when a mask appears (or the size changed) and freeing it when the mask goes.
+    /// </summary>
+    private void UploadMask(bool all, int x0, int y0, int w, int h)
+    {
+        if (Mask is not { } mask)
+        {
+            if (maskGpu.Id != 0) Raylib.UnloadTexture(maskGpu);
+            maskGpu = default;
+            maskScratch = null;
+            return;
+        }
+        if (maskGpu.Id == 0 || maskGpu.Width != Width || maskGpu.Height != Height)
+        {
+            if (maskGpu.Id != 0) Raylib.UnloadTexture(maskGpu);
+            Image blank = Raylib.GenImageColor(Width, Height, new Color(255, 255, 255, 0));
+            maskGpu = Raylib.LoadTextureFromImage(blank);
+            Raylib.UnloadImage(blank);
+            Raylib.SetTextureFilter(maskGpu, MaskFilter);
+            Raylib.SetTextureWrap(maskGpu, TextureWrap.Repeat);
+            all = true;
+        }
+        if (all) (x0, y0, w, h) = (0, 0, Width, Height);
+        if (maskScratch == null || maskScratch.Length < Width * Height) maskScratch = new Color[Width * Height];
+        var pixels = mask.Pixels;
+        for (int row = 0; row < h; row++)
+        for (int col = 0; col < w; col++)
+            maskScratch[row * w + col] = new Color((byte)255, (byte)255, (byte)255, pixels[(y0 + row) * Width + x0 + col].A);
+        fixed (Color* data = maskScratch)
+        {
+            if (all) Raylib.UpdateTexture(maskGpu, data);
+            else Raylib.UpdateTextureRec(maskGpu, new Rectangle(x0, y0, w, h), data);
+        }
     }
 
     /// <summary>
@@ -274,6 +322,44 @@ public sealed unsafe class PaintTexture : IDisposable
     /// <summary>More than one layer, or one that doesn't show its pixels as they are: worth keeping beside the image.</summary>
     public bool HasLayers => Layers.Count > 1 || !Layers[0].IsPlain;
 
+    /// <summary>The smoothness mask (always the top layer), or null.</summary>
+    public Layer? Mask => Layers.Count > 0 && Layers[^1].IsMask ? Layers[^1] : null;
+
+    /// <summary>The layers that make the colour: all but the mask.</summary>
+    public int ColorLayerCount => Layers.Count - (Mask != null ? 1 : 0);
+
+    /// <summary>
+    /// Adds a transparent smoothness mask on top, at <see cref="Layer.DefaultSmoothness"/>, and makes it active.
+    /// Nothing happens when there is one already.
+    /// </summary>
+    public void AddSmoothnessMask()
+    {
+        if (Mask != null) return;
+        Layers.Add(new Layer(Layer.SmoothnessName, new Color[Width * Height]) { Kind = LayerKind.Smoothness, Opacity = Layer.DefaultSmoothness });
+        ActiveLayerIndex = Layers.Count - 1;
+        Touch();
+    }
+
+    /// <summary>
+    /// Puts a stack read from elsewhere (a file, a PSD) in Sable's order: the first smoothness layer on top, any more
+    /// of them made normal, and a stack holding only a mask turned into a normal layer.
+    /// </summary>
+    public static List<Layer> ArrangeMask(IEnumerable<Layer> layers)
+    {
+        var list = layers.ToList();
+        int first = list.FindIndex(l => l.IsMask);
+        for (int i = 0; i < list.Count; i++)
+            if (list[i].IsMask && (i != first || list.Count == 1))
+                list[i] = new Layer(list[i].Name, list[i].Pixels) { Visible = list[i].Visible, Opacity = list[i].Opacity, Blend = list[i].Blend };
+        if (first >= 0 && list[first].IsMask && first != list.Count - 1)
+        {
+            var mask = list[first];
+            list.RemoveAt(first);
+            list.Add(mask);
+        }
+        return list;
+    }
+
     public LayerState Snapshot() => new(Layers.ToArray(),
         Layers.Select(l => (l.Name, l.Visible, l.Opacity, l.Blend)).ToArray(), ActiveLayerIndex);
 
@@ -300,31 +386,44 @@ public sealed unsafe class PaintTexture : IDisposable
             if (Layers.All(l => l.Name != $"Layer {n}")) return $"Layer {n}";
     }
 
-    /// <summary>Puts a layer above the active one and makes it active.</summary>
+    /// <summary>Puts a layer above the active one (but under the mask) and makes it active.</summary>
     public void InsertLayer(Layer layer)
     {
-        ActiveLayerIndex = Math.Clamp(ActiveLayerIndex, 0, Layers.Count - 1) + 1;
+        ActiveLayerIndex = Math.Min(Math.Clamp(ActiveLayerIndex, 0, Layers.Count - 1) + 1, ColorLayerCount);
         Layers.Insert(ActiveLayerIndex, layer);
         Touch();
     }
 
+    /// <summary>The active layer can go: it's the mask, or not the last layer making the colour.</summary>
+    public bool CanDeleteActiveLayer => ActiveLayer.IsMask || ColorLayerCount > 1;
+
     public void DeleteActiveLayer()
     {
-        if (Layers.Count <= 1) return;
+        if (!CanDeleteActiveLayer) return;
         Layers.RemoveAt(ActiveLayerIndex);
         ActiveLayerIndex = Math.Clamp(ActiveLayerIndex - 1, 0, Layers.Count - 1);
         Touch();
+    }
+
+    /// <summary>The active layer can move up (+1) or down (-1): the mask stays on top.</summary>
+    public bool CanMoveActiveLayer(int delta)
+    {
+        int to = ActiveLayerIndex + delta;
+        return to >= 0 && to < ColorLayerCount && !ActiveLayer.IsMask;
     }
 
     /// <summary>Moves the active layer up (+1) or down (-1) the stack.</summary>
     public void MoveActiveLayer(int delta)
     {
         int to = ActiveLayerIndex + delta;
-        if (to < 0 || to >= Layers.Count) return;
+        if (!CanMoveActiveLayer(delta)) return;
         (Layers[ActiveLayerIndex], Layers[to]) = (Layers[to], Layers[ActiveLayerIndex]);
         ActiveLayerIndex = to;
         Touch();
     }
+
+    /// <summary>There's a layer below the active one to merge into, and the active one isn't the mask.</summary>
+    public bool CanMergeDown => ActiveLayerIndex > 0 && !ActiveLayer.IsMask;
 
     /// <summary>
     /// Merges the active layer into the one below: a new layer with the lower one's name and settings, holding the
@@ -333,7 +432,7 @@ public sealed unsafe class PaintTexture : IDisposable
     public void MergeDown()
     {
         int upperIndex = ActiveLayerIndex;
-        if (upperIndex <= 0) return;
+        if (!CanMergeDown) return;
         Layer upper = Layers[upperIndex], lower = Layers[upperIndex - 1];
         var pixels = (Color[])lower.Pixels.Clone();
         if (upper.Visible)
@@ -356,18 +455,24 @@ public sealed unsafe class PaintTexture : IDisposable
         Touch();
     }
 
-    /// <summary>All layers into one plain layer holding what's shown.</summary>
+    /// <summary>All colour layers into one plain layer holding what's shown; the smoothness mask stays as it is.</summary>
     public void Flatten()
     {
         EnsureComposite();
         var flat = new Layer(Layers[0].Name, (Color[])Composite.Clone());
+        var mask = Mask;
         Layers.Clear();
         Layers.Add(flat);
+        if (mask != null) Layers.Add(mask);
         ActiveLayerIndex = 0;
         Touch();
     }
 
-    public void Dispose() => Raylib.UnloadTexture(Gpu);
+    public void Dispose()
+    {
+        Raylib.UnloadTexture(Gpu);
+        if (maskGpu.Id != 0) Raylib.UnloadTexture(maskGpu);
+    }
 }
 
 /// <summary>How textures are sampled in the 3D view.</summary>

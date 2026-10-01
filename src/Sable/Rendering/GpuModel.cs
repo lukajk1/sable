@@ -80,8 +80,19 @@ public sealed unsafe class GpuModel : IDisposable
         material.Maps[(int)MaterialMapIndex.Albedo].Texture = info.TextureIndex >= 0
             ? Textures[info.TextureIndex].Gpu
             : new Texture2D { Id = Rlgl.GetTextureIdDefault(), Width = 1, Height = 1, Mipmaps = 1, Format = PixelFormat.UncompressedR8G8B8A8 };
+        var texture = info.TextureIndex >= 0 ? Textures[info.TextureIndex] : null;
+        material.Maps[(int)MaterialMapIndex.Metalness].Texture = texture?.MaskGpu ?? default;
+        material.Maps[(int)MaterialMapIndex.Metalness].Color = MaskSettings(texture);
         materials[index] = material;
     }
+
+    /// <summary>
+    /// The smoothness mask's settings for <see cref="LitShader"/>, in the material's specular colour: r the red
+    /// overlay (half strength while the mask is shown), g the smoothness where fully painted, a whether there's a mask.
+    /// </summary>
+    private static Color MaskSettings(PaintTexture? texture) => texture?.Mask is { } mask && texture.MaskGpu.Id != 0
+        ? new Color((byte)(mask.Visible ? 128 : 0), (byte)Math.Clamp(mask.Opacity * 255f, 0, 255), (byte)0, (byte)255)
+        : new Color(0, 0, 0, 0);
 
     /// <summary>
     /// Re-uploads a part's mesh with only its visible submeshes. Non-indexed (three vertices per triangle), which
@@ -195,11 +206,18 @@ public sealed unsafe class GpuModel : IDisposable
     public void UploadTextures()
     {
         foreach (var texture in Textures) texture.Upload();
-        // A resized texture (or its undo) has a new GPU texture: point its materials at it.
+        // A resized texture (or its undo) has a new GPU texture: point its materials at it. The same for a smoothness
+        // mask coming or going, or its settings changing.
         for (int m = 0; m < materials.Count; m++)
         {
             int index = Source.Materials[m].TextureIndex;
-            if (index >= 0 && materials[m].Maps[(int)MaterialMapIndex.Albedo].Texture.Id != Textures[index].Gpu.Id) ApplyMaterial(m);
+            if (index < 0) continue;
+            var texture = Textures[index];
+            var maps = materials[m].Maps;
+            if (maps[(int)MaterialMapIndex.Albedo].Texture.Id != texture.Gpu.Id
+                || maps[(int)MaterialMapIndex.Metalness].Texture.Id != texture.MaskGpu.Id
+                || !maps[(int)MaterialMapIndex.Metalness].Color.Equals(MaskSettings(texture)))
+                ApplyMaterial(m);
         }
     }
 
