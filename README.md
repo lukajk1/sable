@@ -146,12 +146,6 @@ The lasso and box select make a selection of texels on the texture the UV view s
 - **Painting:** while a selection exists, the pencil, brush and fill stay inside it, in both views.
 - **Free transform (Ctrl+T, or Transform on the UV toolbar):** a box with handles around the selected texels, as in Photoshop. Drag a corner to scale keeping the proportions (Shift: free ratio), a side to stretch, inside to move, or just outside a corner to rotate (Shift: 15° steps). The toolbar turns by 90° and flips horizontally or vertically; those are exact for pixel art. Smooth resamples bilinearly instead of taking the nearest texel. The texels are lifted off the active layer and previewed in both views; Enter (or a click away) applies as one undo step, Esc cancels.
 
-### Palette
-
-The Palette section in the panel holds swatches and the 16 most recent paint colours (every stroke and fill adds its colour). Click a swatch to paint with it.
-- **Palettes:** PICO-8, Grayscale 8, and Custom (yours, kept between sessions). Built-ins are read-only: "+" on one copies it into Custom with the current colour added. Right-click removes a swatch from Custom.
-- **Load / Save:** Lospec `.hex`, GIMP `.gpl`, JASC `.pal` and Paint.NET `.txt` load into Custom (replacing it or adding to it); Custom saves as `.hex` or `.gpl`.
-
 ## Layers
 
 Each texture is a stack of layers, in the Layers window at the top right of the UV view (its arrow folds it away). The paint tools, fill and selection moves change the selected layer; the views, the eyedropper and saving see all the visible layers together.
@@ -198,7 +192,7 @@ Opening and saving use Sable's own file browser, not the Windows dialogs. Those 
 Settings are kept between sessions in `%APPDATA%\Sable\settings.json`, written when the window closes:
 - **Paint:** colour, brush size, hardness, opacity, flow, and the pressure options and curve.
 - **Fill:** mode, tolerance, contiguous and all layers.
-- **Strokes and colour:** smoothing, Mirror X, the Custom palette, the chosen palette and the recent colours.
+- **Strokes:** smoothing and Mirror X.
 - **Files:** edge padding.
 - **Display:** texture view, lighting, grid, wireframe and the UV view toggles.
 - **Layout:** the split between the views, whether the Layers window is folded, the new-texture size, and the window's size, position and maximized state.
@@ -240,7 +234,7 @@ Environment: `SABLE_BLENDER` (the Blender to use), `SABLE_SETTINGS` (a different
 - `Paint/`: textures on the CPU (`PaintTexture`), their layers, blend modes and layer undo (`Layer`), resizing and its undo (`Resampler`), free transform (`SelectionTransform`), PSD reading and writing (`Psd`), UV coverage (`UvRaster`), edge padding (`EdgePadding`), autosave and recovery (`Recovery`), the hidden layer file (`LayerFile`), strokes and the undo stack (`Stroke`), the pencil, brush, eraser and fill (`Brush`), and texel selections (`TexelSelection`, `SelectionMove`).
 - `Rendering/`: the raylib side: `GpuModel`, `LitShader`, `OutlineRenderer` (selection outline), `UvLayoutExport`, and `VisibilityStep` (undoable hiding).
 - `Views/`: the 3D view with its camera (`Viewport3D`, `OrbitCamera`) and the UV view (`UvView`).
-- `UI/`: the colour wheel, the palette (`Palette`) and the file browser (`FileBrowser`).
+- `UI/`: the colour wheel, the file browser (`FileBrowser`), and a palette (`Palette`, switched off with `ShowPalette` in `App.cs`).
 - `Input/`: pen input from Windows Ink (`PenInput`).
 - `Diagnostics/`: the frame profiler behind the hitch log, and the `--bench` table.
 - `assets/icon/`: the app icon (`sable.svg`, PNG sizes, `sable.ico`).

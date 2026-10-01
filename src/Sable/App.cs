@@ -465,6 +465,8 @@ internal sealed partial class App : IDisposable
     // A file dialog open in the helper process, and what to do with its answer.
     private readonly FileBrowser fileBrowser = new();
     private readonly Palette palette = new();
+    /// <summary>The Palette section (swatches, recent colours) is switched off for now; the code stays for later.</summary>
+    private const bool ShowPalette = false;
     private bool openPathPopup;
     private string pathInput = "";
 
@@ -1874,10 +1876,11 @@ internal sealed partial class App : IDisposable
                                | ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoBringToFrontOnFocus);
 
         DrawToolSection();
-        palette.Draw(ColorWheel.HsvToRgb(hsv),
-            rgb => hsv = ColorWheel.RgbToHsv(rgb, hsv.X),
-            then => fileBrowser.Open(false, "Load palette", Palette.FileFilter, null, null, then),
-            then => fileBrowser.Open(true, "Save palette", Palette.SaveFilter, null, palette.Name, then));
+        if (ShowPalette)
+            palette.Draw(ColorWheel.HsvToRgb(hsv),
+                rgb => hsv = ColorWheel.RgbToHsv(rgb, hsv.X),
+                then => fileBrowser.Open(false, "Load palette", Palette.FileFilter, null, null, then),
+                then => fileBrowser.Open(true, "Save palette", Palette.SaveFilter, null, palette.Name, then));
         ImGui.Separator();
 
         if (Model == null)
