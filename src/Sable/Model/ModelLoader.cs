@@ -153,6 +153,19 @@ public static class ModelLoader
         };
     }
 
+    /// <summary>
+    /// Where Sable saves a texture that has no file of its own: "&lt;model&gt;_&lt;texture&gt;.png" beside the model,
+    /// with characters that don't belong in file names turned into underscores. Loading looks there too, so a texture
+    /// made in Sable comes back with its material even before it's hooked up in Blender.
+    /// </summary>
+    public static string DefaultTexturePath(string modelPath, string textureName)
+    {
+        string name = Path.GetFileNameWithoutExtension(textureName);
+        foreach (char c in Path.GetInvalidFileNameChars()) name = name.Replace(c, '_');
+        name = name.Replace(' ', '_').Replace("(", "").Replace(")", "");
+        return Path.Combine(Path.GetDirectoryName(Path.GetFullPath(modelPath))!, $"{Path.GetFileNameWithoutExtension(modelPath)}_{name}.png");
+    }
+
     private sealed record TextureContext(Scene Scene, string ModelDir, LoadedModel Model, Dictionary<string, int> Lookup,
         Dictionary<string, string> BlendImages);
 
@@ -172,6 +185,12 @@ public static class ModelLoader
         {
             // A Blender link exports no images, only which file each material reads.
             textureIndex = FindTexture(image, material.Name!, context);
+        }
+        else if (!string.IsNullOrWhiteSpace(material.Name)
+                 && DefaultTexturePath(context.Model.SourcePath, $"{material.Name}.png") is var saved && File.Exists(saved))
+        {
+            // A texture made in Sable for this material and saved beside the model, not (yet) hooked up in Blender.
+            textureIndex = FindTexture(saved, material.Name, context);
         }
 
         return new MaterialInfo

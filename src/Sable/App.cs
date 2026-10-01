@@ -609,14 +609,7 @@ internal sealed partial class App : IDisposable
 
     private string DefaultSavePath(PaintTexture texture) => DefaultSavePath(texture.Name);
 
-    private string DefaultSavePath(string textureName)
-    {
-        string source = Model!.Source.SourcePath;
-        string name = Path.GetFileNameWithoutExtension(textureName);
-        foreach (char c in Path.GetInvalidFileNameChars()) name = name.Replace(c, '_');
-        name = name.Replace(' ', '_').Replace("(", "").Replace(")", "");
-        return Path.Combine(Path.GetDirectoryName(source)!, $"{Path.GetFileNameWithoutExtension(source)}_{name}.png");
-    }
+    private string DefaultSavePath(string textureName) => ModelLoader.DefaultTexturePath(Model!.Source.SourcePath, textureName);
 
     private void SetStatus(string text, bool error)
     {
