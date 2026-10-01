@@ -12,25 +12,34 @@ public static class ColorWheel
     private enum Target { None, Ring, Square }
     private static Target dragging;
 
-    public static bool Draw(string id, ref Vector3 hsv, float size)
+    /// <param name="pointer">Where the pen or mouse is, in window pixels (the app's pen-aware pointer).</param>
+    /// <param name="down">The pen tip or left button is down.</param>
+    /// <param name="pressed">It went down this frame.</param>
+    /// <remarks>
+    /// The pointer comes from the app rather than ImGui's mouse: Windows only moves the mouse once the pen has
+    /// travelled past a small threshold, which swallowed small pen movements here as it did in painting.
+    /// </remarks>
+    public static bool Draw(string id, ref Vector3 hsv, float size, Vector2 pointer, bool down, bool pressed)
     {
         var drawList = ImGui.GetWindowDrawList();
         Vector2 origin = ImGui.GetCursorScreenPos();
+        // Keeps the layout and stops a drag on the wheel from moving the window.
         ImGui.InvisibleButton(id, new Vector2(size, size));
 
         Vector2 center = origin + new Vector2(size * 0.5f);
         float outer = size * 0.5f, inner = outer * 0.80f;
         float half = inner * 0.68f;
-        Vector2 mouse = ImGui.GetIO().MousePos;
+        Vector2 mouse = pointer;
 
-        if (ImGui.IsItemActivated())
+        if (pressed)
         {
             float d = Vector2.Distance(mouse, center);
-            dragging = d >= inner - 2f ? Target.Ring
+            dragging = d > outer + 2f ? Target.None
+                : d >= inner - 2f ? Target.Ring
                 : MathF.Abs(mouse.X - center.X) <= half + 6f && MathF.Abs(mouse.Y - center.Y) <= half + 6f ? Target.Square
                 : Target.None;
         }
-        if (!ImGui.IsItemActive()) dragging = Target.None;
+        if (!down) dragging = Target.None;
 
         bool changed = false;
         if (dragging == Target.Ring)

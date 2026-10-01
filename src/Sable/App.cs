@@ -2156,7 +2156,7 @@ internal sealed partial class App : IDisposable
         pickerOpen = ImGui.BeginPopup("##picker", ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoSavedSettings);
         if (!pickerOpen) return;
 
-        ColorWheel.Draw("##wheel", ref hsv, 230f);
+        ColorWheel.Draw("##wheel", ref hsv, 230f, pointer, pointerDown, pointerPressed);
 
         var now = ColorWheel.HsvToRgb(hsv);
         var before = ColorWheel.HsvToRgb(hsvAtPickerOpen);
