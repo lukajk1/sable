@@ -56,11 +56,40 @@ public static unsafe class LayerFile
             return;
         }
         string temp = path + ".tmp";
-        WriteZip(temp, texture.Width, texture.Height, texture.ActiveLayerIndex,
-            texture.Layers.Select(l => new LayerData(l.Name, l.Visible, l.Opacity, l.Blend, l.Pixels)).ToArray(),
-            imageHash: ImageHash(written));
-        if (File.Exists(path)) File.SetAttributes(path, FileAttributes.Normal);
-        File.Move(temp, path, overwrite: true);
+        // A temp file left by an earlier save that couldn't finish would block this one.
+        if (File.Exists(temp)) File.Delete(temp);
+        try
+        {
+            WriteZip(temp, texture.Width, texture.Height, texture.ActiveLayerIndex,
+                texture.Layers.Select(l => new LayerData(l.Name, l.Visible, l.Opacity, l.Blend, l.Pixels)).ToArray(),
+                imageHash: ImageHash(written));
+            ReplaceWithRetry(temp, path);
+        }
+        finally
+        {
+            if (File.Exists(temp)) File.Delete(temp);
+        }
+    }
+
+    /// <summary>
+    /// Moves <paramref name="temp"/> over <paramref name="path"/>, retrying for a moment while something else (a
+    /// virus scanner, a sync client, Explorer's preview) briefly has the old file open.
+    /// </summary>
+    private static void ReplaceWithRetry(string temp, string path)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                if (File.Exists(path)) File.SetAttributes(path, FileAttributes.Normal);
+                File.Move(temp, path, overwrite: true);
+                return;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException && attempt < 10)
+            {
+                Thread.Sleep(100);
+            }
+        }
     }
 
     /// <summary>
