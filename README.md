@@ -94,7 +94,7 @@ Painting only ever goes to the active (selected) object, in either view.
 | Key | Tool |
 | --- | --- |
 | V | Select |
-| N | Pencil: exactly one texel, fully opaque |
+| P | Pencil: exactly one texel, fully opaque |
 | B | Brush: round and soft, sized in texels (W bigger, Q smaller), with Hardness, Opacity and Flow |
 | E | Eraser: the brush, taking alpha away on the selected layer instead of adding colour |
 | I | Eyedropper: the unlit texel colour (the material colour where there's no texture) |

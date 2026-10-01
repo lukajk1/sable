@@ -664,7 +664,7 @@ internal sealed partial class App : IDisposable
 
         if (Raylib.IsKeyPressed(KeyboardKey.Tab)) ToggleMode();
         if (Raylib.IsKeyPressed(KeyboardKey.V)) tool = Tool.Select;
-        if (Raylib.IsKeyPressed(KeyboardKey.N)) tool = Tool.Pencil;
+        if (Raylib.IsKeyPressed(KeyboardKey.P)) tool = Tool.Pencil;
         if (Raylib.IsKeyPressed(KeyboardKey.B)) tool = Tool.Brush;
         if (Raylib.IsKeyPressed(KeyboardKey.E)) tool = Tool.Eraser;
         if (Raylib.IsKeyPressed(KeyboardKey.I)) tool = Tool.Eyedropper;
@@ -1927,7 +1927,7 @@ internal sealed partial class App : IDisposable
         }
         ToolButton("Select", Tool.Select, "V");
         ImGui.SameLine();
-        ToolButton("Pencil 1px", Tool.Pencil, "N");
+        ToolButton("Pencil 1px", Tool.Pencil, "P");
         ToolButton("Brush", Tool.Brush, "B");
         ImGui.SameLine();
         ToolButton("Eraser", Tool.Eraser, "E");

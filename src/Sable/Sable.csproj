@@ -12,7 +12,7 @@
     <AssemblyName>Sable</AssemblyName>
     <ApplicationIcon>..\..\assets\icon\sable.ico</ApplicationIcon>
     <!-- The installer (installer/build.py) takes its version from here. -->
-    <Version>0.3.0</Version>
+    <Version>0.3.1</Version>
     <Product>Sable</Product>
     <Description>Paint textures on 3D models</Description>
   </PropertyGroup>
