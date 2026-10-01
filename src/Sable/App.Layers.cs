@@ -666,7 +666,7 @@ internal sealed partial class App
         Directory.CreateDirectory(dir);
         string png = Path.Combine(dir, "layers.png");
         tex.ExportTo(png);
-        LayerFile.Write(tex, png);
+        LayerFile.Write(tex, png, tex.Composite);
         using (var reopened = PaintTexture.FromEncoded("layers.png", ".png", File.ReadAllBytes(png), png))
         {
             bool loaded = LayerFile.TryLoad(reopened, png, out string? note);

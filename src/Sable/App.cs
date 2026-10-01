@@ -194,6 +194,7 @@ internal sealed partial class App : IDisposable
         SetWindowIcon();
         Raylib.SetWindowMinSize(900, 560);
         ApplySettings();
+        StartRecovery();
         Raylib.SetExitKey(KeyboardKey.Null);
         rlImGui.Setup(true);
         // No imgui.ini: Sable keeps its own settings, and the install folder may not be writable.
@@ -233,6 +234,7 @@ internal sealed partial class App : IDisposable
             RunSelfTest();
             RunBench();
             profiler.Mark("tools");
+            TickAutosave();
             Model?.UploadTextures();
             UpdateTitle();
             profiler.Mark("upload");
@@ -266,6 +268,7 @@ internal sealed partial class App : IDisposable
             fileBrowser.Draw(new Vector2(w, h));
             DrawNewTexturePopup();
             DrawResizePopup();
+            DrawRecoveryPrompt();
             DrawColorPicker();
             DrawToolCursor();
             DrawSmoothingString();
@@ -416,6 +419,7 @@ internal sealed partial class App : IDisposable
 
         profiler.Skip();
         EndStroke();
+        FlushRecovery();
         Model?.Dispose();
         undo.Clear();
         state.Model = new GpuModel(task.Result, shader!.Shader);
@@ -440,6 +444,7 @@ internal sealed partial class App : IDisposable
         SetStatus($"Opened {s.Name}: {s.Objects.Count} objects, {s.Parts.Sum(p => p.TriangleCount)} tris, {s.Textures.Count} textures"
                   + (s.Warnings.Count > 0 ? $", {s.Warnings.Count} warnings" : ""), error: false);
         LoadLayers(Model!.Textures);
+        OfferRecovery();
         if (options.Bench) benchStep = 0;
         else if (options.SelfTest) selfTestStep = 0;
         else if (options.ScreenshotPath != null) screenshotFrames = 4;
@@ -506,7 +511,7 @@ internal sealed partial class App : IDisposable
         var texture = Model.Textures[state.ActiveTexture];
         Pick(true, "Export texture", FileBrowser.PngFilter, Path.ChangeExtension(texture.Name, ".png"), path =>
         {
-            texture.ExportTo(path);
+            texture.ExportTo(path, PaddedPixels(texture));
             SetStatus($"Exported {texture.Name} to {path}", error: false);
         });
     }
@@ -584,8 +589,9 @@ internal sealed partial class App : IDisposable
             string path = texture.FilePath ?? DefaultSavePath(texture);
             try
             {
-                texture.Save(path);
-                LayerFile.Write(texture, path);
+                var written = PaddedPixels(texture);
+                texture.Save(path, written);
+                LayerFile.Write(texture, path, written);
                 saved.Add(Path.GetFileName(path) + (texture.HasLayers ? $" ({texture.Layers.Count} layers)" : ""));
             }
             catch (Exception e)
@@ -595,6 +601,7 @@ internal sealed partial class App : IDisposable
             }
         }
         SetStatus(saved.Count == 0 ? "Nothing to save." : $"Saved {string.Join(", ", saved)}", error: false);
+        ClearRecoveryIfSaved();
     }
 
     private string DefaultSavePath(PaintTexture texture) => DefaultSavePath(texture.Name);
@@ -1796,6 +1803,11 @@ internal sealed partial class App : IDisposable
                 ImGui.EndMenu();
             }
             ImGui.Separator();
+            ImGui.SetNextItemWidth(120);
+            ImGui.SliderInt("Edge padding", ref edgePadding, 0, 64, edgePadding == 0 ? "off" : "%d texels");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("When saving or exporting, colour bleeds this far past the edge of each UV island, so mipmaps and\nbilinear filtering in a game engine don't pull in the background as thin lines along seams.\nOnly texels outside every island are changed, and only in the saved image: the layers keep what you painted.");
+            ImGui.Separator();
             if (ImGui.MenuItem("Quit")) quit = true;
             ImGui.EndMenu();
         }
@@ -2148,6 +2160,7 @@ internal sealed partial class App : IDisposable
         string right = profiler.LastHitch is { } hitch ? $"{hitch} - details in {profiler.LogPath}"
             : uvView.Hovered && uvView.MouseOnTexture
             ? $"texel {(int)uvView.MouseTexel.X}, {(int)uvView.MouseTexel.Y}   ({uvView.TextureSize.X:0}x{uvView.TextureSize.Y:0})"
+            : autosaver.Status.Length > 0 ? autosaver.Status
             : "MMB orbit  Shift+MMB pan  Wheel zoom  1/3/7 views  5 ortho  / local  Tab submesh  H hide";
         float width = ImGui.CalcTextSize(right).X;
         ImGui.SameLine(MathF.Max(screenWidth - width - 12f, ImGui.GetCursorPosX() + 20f));
@@ -2402,6 +2415,7 @@ internal sealed partial class App : IDisposable
                 if (state.ActiveTexture >= 0) SelfTestLayers(Model.Textures[state.ActiveTexture]);
                 if (state.ActiveTexture >= 0) SelfTestResize(Model.Textures[state.ActiveTexture]);
                 SelfTestStrokes();
+                if (state.ActiveTexture >= 0) SelfTestPadding(Model.Textures[state.ActiveTexture]);
 
                 tool = Tool.Brush;
                 Console.WriteLine($"[selftest] undo available: {undo.CanUndo}; dirty textures: {Model.Textures.Count(t => t.Dirty)}");
@@ -2470,6 +2484,7 @@ internal sealed partial class App : IDisposable
         newTextureSize = ValidTextureSize(saved.NewTextureSize);
         fillAllLayers = saved.FillAllLayers;
         fillMode = (FillMode)Math.Clamp(saved.FillMode, 0, 2);
+        edgePadding = Math.Clamp(saved.EdgePadding, 0, 64);
         palette.LoadFrom(saved);
         mirrorX = saved.MirrorX;
         smoothing = Math.Clamp(saved.Smoothing, 0f, 1f);
@@ -2518,6 +2533,7 @@ internal sealed partial class App : IDisposable
             NewTextureSize = newTextureSize,
             FillAllLayers = fillAllLayers,
             FillMode = (int)fillMode,
+            EdgePadding = edgePadding,
             MirrorX = mirrorX,
             Smoothing = smoothing,
             RecentFolders = fileBrowser.RecentFolders.ToList(),
@@ -2544,6 +2560,7 @@ internal sealed partial class App : IDisposable
     public void Dispose()
     {
         SaveSettings();
+        FlushRecovery();
         Model?.Dispose();
         view3d.Dispose();
         uvView.Dispose();

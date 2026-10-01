@@ -1,4 +1,5 @@
 using System.Numerics;
+using Raylib_cs;
 using Sable.Model;
 using Sable.Paint;
 using Sable.UI;
@@ -51,6 +52,23 @@ internal sealed partial class App
         return triangles.Count;
     }
 
+    /// <summary>Texels of padding saved images get past the edge of their UV islands (0 = none).</summary>
+    private int edgePadding = 4;
+
+    /// <summary>
+    /// What saving writes for a texture: the flattened layers with colour bled <see cref="edgePadding"/> texels past
+    /// the UV islands of every part that uses it. Without padding, or UVs, it's the flattened layers as they are.
+    /// </summary>
+    private Color[] PaddedPixels(PaintTexture texture)
+    {
+        texture.EnsureComposite();
+        int index = Model!.Textures.IndexOf(texture);
+        if (edgePadding <= 0 || index < 0) return texture.Composite;
+        var inside = UvRaster.Coverage(Model.Source, p => Model.TextureOf(p) == index, texture.Width, texture.Height);
+        if (!inside.Contains(true)) return texture.Composite;
+        return EdgePadding.Pad(texture.Composite, texture.Width, texture.Height, inside, edgePadding);
+    }
+
     /// <summary>The surface point of the active object whose UVs are at <paramref name="texelPoint"/> on the active texture.</summary>
     private bool HitAtTexel(Vector2 texelPoint, out SurfaceHit hit)
     {
@@ -81,5 +99,37 @@ internal sealed partial class App
             }
         }
         return false;
+    }
+
+    /// <summary>
+    /// Edge padding: texels inside the UV islands are saved exactly, some outside get bled colour, and layers
+    /// saved beside a padded image still come back when it's reopened.
+    /// </summary>
+    private void SelfTestPadding(PaintTexture tex)
+    {
+        int index = Model!.Textures.IndexOf(tex);
+        var inside = UvRaster.Coverage(Model.Source, p => Model.TextureOf(p) == index, tex.Width, tex.Height);
+        int saved = edgePadding;
+        edgePadding = 4;
+        var padded = PaddedPixels(tex);
+        edgePadding = saved;
+        bool insideExact = true;
+        int changedOutside = 0;
+        for (int i = 0; i < padded.Length; i++)
+        {
+            if (inside[i]) insideExact &= padded[i].Equals(tex.Composite[i]);
+            else if (!padded[i].Equals(tex.Composite[i])) changedOutside++;
+        }
+
+        string dir = Path.Combine(Path.GetTempPath(), "Sable", "selftest");
+        Directory.CreateDirectory(dir);
+        string png = Path.Combine(dir, "padded.png");
+        tex.ExportTo(png, padded);
+        LayerFile.Write(tex, png, padded);
+        bool restored;
+        using (var reopened = PaintTexture.FromEncoded("padded.png", ".png", File.ReadAllBytes(png), png))
+            restored = LayerFile.TryLoad(reopened, png, out _) && reopened.Layers.Count == tex.Layers.Count;
+        Console.WriteLine($"[selftest] edge padding (4): {inside.Count(b => b)} texels inside islands saved exactly {insideExact}, "
+                          + $"{changedOutside} outside bled; layers restored beside the padded image {restored} ({tex.Layers.Count} layers)");
     }
 }

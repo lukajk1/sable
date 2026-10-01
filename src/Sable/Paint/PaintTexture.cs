@@ -249,19 +249,20 @@ public sealed unsafe class PaintTexture : IDisposable
     }
 
     /// <summary>Writes the texture and makes <paramref name="path"/> where it saves from now on.</summary>
-    public void Save(string path)
+    /// <param name="pixels">What to write instead of the plain flattened layers (the edge-padded version).</param>
+    public void Save(string path, Color[]? pixels = null)
     {
-        ExportTo(path);
+        ExportTo(path, pixels);
         FilePath = path;
         Dirty = false;
     }
 
     /// <summary>Writes a flattened copy, leaving where the texture saves (and its unsaved state) alone.</summary>
-    public void ExportTo(string path)
+    public void ExportTo(string path, Color[]? pixels = null)
     {
         EnsureComposite();
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-        fixed (Color* data = Composite)
+        fixed (Color* data = pixels ?? Composite)
         {
             var image = new Image { Data = data, Width = Width, Height = Height, Mipmaps = 1, Format = PixelFormat.UncompressedR8G8B8A8 };
             if (!Raylib.ExportImage(image, path)) throw new IOException($"Couldn't write {path}");

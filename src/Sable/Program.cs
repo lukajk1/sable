@@ -11,7 +11,7 @@ internal static partial class Program
     private static int Main(string[] args)
     {
         // A WinExe has no console; when started from a terminal, print into it for the options that report.
-        if (args.Any(a => a is "--check" or "--bench" or "--selftest" or "--linktest")) AttachConsole(AttachParentProcess);
+        if (args.Any(a => a is "--check" or "--bench" or "--selftest" or "--linktest" or "--recoverytest")) AttachConsole(AttachParentProcess);
         if (args.Length > 1 && args[0] == "--check")
         {
             var model = Model.ModelLoader.Load(args[1], _ => { });
@@ -40,6 +40,8 @@ internal sealed class AppOptions
     public bool SelfTest { get; private set; }
     /// <summary>With a link: paint, bump its revision, and check the paint survives the update.</summary>
     public bool LinkTest { get; private set; }
+    /// <summary>Run twice: the first run paints, autosaves and exits like a crash; the second recovers and checks.</summary>
+    public bool RecoveryTest { get; private set; }
     /// <summary>Time scripted strokes on the largest textured object, print the results and quit.</summary>
     public bool Bench { get; private set; }
     /// <summary>Starting texture view for the 3D view: 0 pixel, 1 smooth, 2 smooth + mipmaps.</summary>
@@ -58,6 +60,7 @@ internal sealed class AppOptions
                 case "--select" when i + 1 < args.Length: options.SelectPart = args[++i]; break;
                 case "--link" when i + 1 < args.Length: options.ModelPath = args[++i]; break;
                 case "--linktest": options.LinkTest = true; break;
+                case "--recoverytest": options.RecoveryTest = true; break;
                 case "--selftest": options.SelfTest = true; break;
                 case "--bench": options.Bench = true; break;
                 case "--frames" when i + 1 < args.Length: options.QuitAfterFrames = int.TryParse(args[++i], out int f) ? f : 0; break;

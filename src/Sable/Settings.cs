@@ -22,6 +22,8 @@ internal sealed class Settings
     public bool FillAllLayers { get; set; }
     /// <summary>0 similar colour, 1 UV island, 2 face.</summary>
     public int FillMode { get; set; }
+    /// <summary>Texels saved images are padded past their UV islands.</summary>
+    public int EdgePadding { get; set; } = 4;
     public bool MirrorX { get; set; }
     /// <summary>The stroke stabilizer's string, 0..1 of its longest.</summary>
     public float Smoothing { get; set; }
