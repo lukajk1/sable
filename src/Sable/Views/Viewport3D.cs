@@ -33,6 +33,9 @@ public sealed class Viewport3D : IDisposable
     private int width, height;
     private MouseButton navButton = MouseButton.Middle;
     private Vector2 origin, lastPointer;
+    private bool lastLeftDown;
+    /// <summary>The current drag started with Space held: Space's mapping (pan, Shift orbit, Ctrl zoom) applies.</summary>
+    private bool spaceDrag;
 
     public Texture2D Texture => target.Texture;
 
@@ -44,11 +47,15 @@ public sealed class Viewport3D : IDisposable
     {
         Navigating = true;
         navButton = MouseButton.Left;
+        spaceDrag = false;
     }
 
     /// <param name="pointer">Where the pen or mouse is, in window pixels (the app picks the source).</param>
     /// <param name="leftDown">Whether the pen tip or left button is down, for left-drag navigation.</param>
-    public void Update(Rectangle rect, bool hovered, Vector2 pointer, bool leftDown, Vector3 frameMin, Vector3 frameMax)
+    /// <param name="space">
+    /// Space is held (painting programs' hand tool): a left drag pans, with Shift orbits, with Ctrl zooms.
+    /// </param>
+    public void Update(Rectangle rect, bool hovered, Vector2 pointer, bool leftDown, Vector3 frameMin, Vector3 frameMax, bool space = false)
     {
         Resize((int)rect.Width, (int)rect.Height);
         Hovered = hovered;
@@ -64,13 +71,27 @@ public sealed class Viewport3D : IDisposable
         {
             Navigating = true;
             navButton = MouseButton.Middle;
+            spaceDrag = false;
         }
+        if (hovered && space && leftDown && !lastLeftDown && !Navigating)
+        {
+            Navigating = true;
+            navButton = MouseButton.Left;
+            spaceDrag = true;
+        }
+        lastLeftDown = leftDown;
         bool held = navButton == MouseButton.Left ? leftDown : Raylib.IsMouseButtonDown(navButton);
         if (Navigating && !held) Navigating = false;
 
         if (Navigating)
         {
-            if (shift) Camera.Pan(delta, rect.Height);
+            if (spaceDrag)
+            {
+                if (shift) Camera.Orbit(delta, OrbitCenter);
+                else if (ctrl) Camera.Zoom(MathF.Exp(delta.Y * 0.01f));
+                else Camera.Pan(delta, rect.Height);
+            }
+            else if (shift) Camera.Pan(delta, rect.Height);
             else if (ctrl) Camera.Zoom(MathF.Exp(delta.Y * 0.01f));
             else Camera.Orbit(delta, OrbitCenter);
         }

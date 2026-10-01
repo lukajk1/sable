@@ -26,6 +26,7 @@ public sealed class UvView : IDisposable
     private int width, height;
     private Vector2 offset;
     private float zoom = 1f;
+    private bool leftDragging, lastLeftDown;
     private bool fitPending = true;
     private bool dragging;
     private Vector2 lastSize;
@@ -36,7 +37,8 @@ public sealed class UvView : IDisposable
     public void RequestFit() => fitPending = true;
 
     /// <param name="pointer">Where the pen or mouse is, in window pixels (the app picks the source).</param>
-    public void Update(Rectangle rect, bool hovered, Vector2 pointer, EditorState state)
+    /// <param name="space">Space is held: a left drag pans, as the middle button does.</param>
+    public void Update(Rectangle rect, bool hovered, Vector2 pointer, EditorState state, bool leftDown = false, bool space = false)
     {
         Resize((int)rect.Width, (int)rect.Height);
         Hovered = hovered;
@@ -49,8 +51,10 @@ public sealed class UvView : IDisposable
         Vector2 delta = pointer - lastPointer;
         lastPointer = pointer;
 
-        if (hovered && Raylib.IsMouseButtonPressed(MouseButton.Middle)) dragging = true;
-        if (!Raylib.IsMouseButtonDown(MouseButton.Middle)) dragging = false;
+        if (hovered && Raylib.IsMouseButtonPressed(MouseButton.Middle)) (dragging, leftDragging) = (true, false);
+        if (hovered && space && leftDown && !lastLeftDown && !dragging) (dragging, leftDragging) = (true, true);
+        lastLeftDown = leftDown;
+        if (leftDragging ? !leftDown : !Raylib.IsMouseButtonDown(MouseButton.Middle)) dragging = false;
         if (dragging) offset += delta;
 
         if (hovered)

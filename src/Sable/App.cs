@@ -226,8 +226,8 @@ internal sealed partial class App : IDisposable
 
             var (sMin, sMax) = VisibleBounds();
             view3d.OrbitCenter = SelectionCenter();
-            view3d.Update(rect3d, free && Raylib.CheckCollisionPointRec(pointer, rect3d), pointer, pointerDown, sMin, sMax);
-            uvView.Update(rectUv, free && Raylib.CheckCollisionPointRec(pointer, rectUv), pointer, state);
+            view3d.Update(rect3d, free && Raylib.CheckCollisionPointRec(pointer, rect3d), pointer, pointerDown, sMin, sMax, SpaceHeld && stroke == null);
+            uvView.Update(rectUv, free && Raylib.CheckCollisionPointRec(pointer, rectUv), pointer, state, pointerDown, SpaceHeld && stroke == null);
             profiler.Mark("views");
             HandleShortcuts();
             UpdateTools(free);
@@ -837,6 +837,7 @@ internal sealed partial class App : IDisposable
     /// <summary>The cursor for the current tool while it is over a view (or dragging); the system arrow elsewhere.</summary>
     private CursorIcon ToolIcon(bool free)
     {
+        if (SpaceHeld && stroke == null) return CursorIcon.System;
         bool overView = free && ((view3d.Hovered && !view3d.Navigating) || uvView.Hovered);
         if (!overView && stroke == null && lassoDrag == LassoDrag.None) return CursorIcon.System;
         switch (tool)
@@ -864,7 +865,8 @@ internal sealed partial class App : IDisposable
         bool painting = tool is Tool.Pencil or Tool.Brush or Tool.Eraser;
         // Holding Alt turns any tool into the eyedropper until it's released.
         bool sampling = (tool == Tool.Eyedropper || alt) && stroke == null && lassoDrag == LassoDrag.None;
-        bool pressed = pointerPressed;
+        // Space is the hand tool: its drags navigate (in the views), so no tool starts.
+        bool pressed = pointerPressed && !SpaceHeld;
 
         UpdateZoom(free, pressed && !sampling);
         UpdateLasso(free, pressed && !sampling);
@@ -1522,8 +1524,17 @@ internal sealed partial class App : IDisposable
     private enum CursorIcon { System, Eyedropper, Pencil, Brush, Eraser, Lasso, Move, Fill, Zoom, Box }
 
     /// <summary>Shows the system cursor, or hides it while a tool draws its own.</summary>
+    /// <summary>Space held (and not typing): drags in either view navigate instead of using the tool.</summary>
+    private static bool SpaceHeld => Raylib.IsKeyDown(KeyboardKey.Space) && !ImGui.GetIO().WantCaptureKeyboard;
+
+    private MouseCursor systemCursor = MouseCursor.Default;
+
     private void UpdateSystemCursor()
     {
+        // The hand tool shows the move cursor over the views.
+        var shape = SpaceHeld && stroke == null && (view3d.Hovered || uvView.Hovered || view3d.Navigating) ? MouseCursor.ResizeAll : MouseCursor.Default;
+        if (shape != systemCursor) Raylib.SetMouseCursor(systemCursor = shape);
+        if (shape != MouseCursor.Default) cursorIcon = CursorIcon.System;
         bool custom = cursorIcon != CursorIcon.System;
         if (custom == Raylib.IsCursorHidden()) return;
         if (custom) Raylib.HideCursor();

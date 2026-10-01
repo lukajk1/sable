@@ -57,6 +57,7 @@ Stop link (in the Sable tab) ends the updates; Sable says so and keeps running. 
 
 | Input | Action |
 | --- | --- |
+| Space + drag (pen or left button), with any tool | Pan (the hand tool, as in Photoshop and Krita); Space+Shift+drag orbits, Space+Ctrl+drag zooms |
 | Middle drag, or left drag from empty space | Orbit, around the selection if there is one |
 | Shift + middle drag (or empty-space left drag) | Pan |
 | Wheel, or Ctrl + middle drag | Zoom |
@@ -72,7 +73,7 @@ Stop link (in the Sable tab) ends the updates; Sable says so and keeps running. 
 
 The selected object always has an orange outline around its visible silhouette, whatever the wireframe setting. In Submesh mode the outline is dimmer and the selected piece keeps its edges.
 
-UV view: middle drag pans, the wheel zooms around the cursor, Z drags zoom, and Home fits the texture. A texel grid appears once texels are big enough to see.
+UV view: middle drag or Space + drag pans, the wheel zooms around the cursor, Z drags zoom, and Home fits the texture. A texel grid appears once texels are big enough to see.
 
 ## Selecting and hiding
 
