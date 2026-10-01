@@ -184,39 +184,12 @@ public sealed unsafe class GpuModel : IDisposable
     /// </summary>
     public void FillUvIslands(PaintTexture texture, int materialIndex, Color color)
     {
-        int w = texture.Width, h = texture.Height;
+        // A texel diagonal of dilation reaches every texel the island's outline touches.
+        var mask = UvRaster.Coverage(Source, p => Source.Parts[p].MaterialIndex == materialIndex, texture.Width, texture.Height, 1.415f);
         var pixels = texture.Pixels;
-        foreach (var part in Source.Parts)
-        {
-            if (part.MaterialIndex != materialIndex || part.Uvs == null) continue;
-            for (int t = 0; t < part.TriangleCount; t++)
-            {
-                var scale = new Vector2(w, h);
-                Vector2 a = part.Uvs[part.Indices[t * 3]] * scale, b = part.Uvs[part.Indices[t * 3 + 1]] * scale, c = part.Uvs[part.Indices[t * 3 + 2]] * scale;
-                int x0 = (int)MathF.Floor(MathF.Min(a.X, MathF.Min(b.X, c.X))) - 1, x1 = (int)MathF.Ceiling(MathF.Max(a.X, MathF.Max(b.X, c.X))) + 1;
-                int y0 = (int)MathF.Floor(MathF.Min(a.Y, MathF.Min(b.Y, c.Y))) - 1, y1 = (int)MathF.Ceiling(MathF.Max(a.Y, MathF.Max(b.Y, c.Y))) + 1;
-                for (int y = y0; y < y1; y++)
-                for (int x = x0; x < x1; x++)
-                {
-                    // Any of the texel's centre, corners or a texel beyond them inside the triangle.
-                    bool covered = false;
-                    for (int s = 0; s < 9 && !covered; s++)
-                        covered = Inside(a, b, c, new Vector2(x + 0.5f + (s % 3 - 1) * 1.0f, y + 0.5f + (s / 3 - 1) * 1.0f));
-                    if (!covered) continue;
-                    int wx = ((x % w) + w) % w, wy = ((y % h) + h) % h;
-                    pixels[wy * w + wx] = color;
-                }
-            }
-        }
+        for (int i = 0; i < mask.Length; i++)
+            if (mask[i]) pixels[i] = color;
         texture.Touch();
-    }
-
-    private static bool Inside(Vector2 a, Vector2 b, Vector2 c, Vector2 p)
-    {
-        float e0 = (b.X - a.X) * (p.Y - a.Y) - (b.Y - a.Y) * (p.X - a.X);
-        float e1 = (c.X - b.X) * (p.Y - b.Y) - (c.Y - b.Y) * (p.X - b.X);
-        float e2 = (a.X - c.X) * (p.Y - c.Y) - (a.Y - c.Y) * (p.X - c.X);
-        return (e0 >= 0 && e1 >= 0 && e2 >= 0) || (e0 <= 0 && e1 <= 0 && e2 <= 0);
     }
 
     public void UploadTextures()

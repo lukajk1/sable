@@ -51,33 +51,10 @@ internal sealed partial class App
     private Vector2? MirrorTexel(Vector2 texelPoint)
     {
         if (!mirrorX || state.ActiveObject < 0 || state.ActiveTexture < 0) return null;
-        var tex = Model!.Textures[state.ActiveTexture];
-        var size = new Vector2(tex.Width, tex.Height);
-        Vector2 uv = texelPoint / size;
-        foreach (int partIndex in Model.Source.Objects[state.ActiveObject].Parts)
-        {
-            var part = Model.Source.Parts[partIndex];
-            if (part.Uvs == null || Model.TextureOf(partIndex) != state.ActiveTexture) continue;
-            for (int t = 0; t < part.TriangleCount; t++)
-            {
-                if (!part.TriangleVisible(t)) continue;
-                int i0 = part.Indices[t * 3], i1 = part.Indices[t * 3 + 1], i2 = part.Indices[t * 3 + 2];
-                var b = Raycast.Barycentric2D(uv, part.Uvs[i0], part.Uvs[i1], part.Uvs[i2]);
-                if (b.X < -1e-4f || b.Y < -1e-4f || b.Z < -1e-4f) continue;
-                Vector3 a = part.Positions[i0], bb = part.Positions[i1], c = part.Positions[i2];
-                var hit = new SurfaceHit
-                {
-                    Part = partIndex,
-                    Triangle = t,
-                    Point = a * b.X + bb * b.Y + c * b.Z,
-                    Normal = Vector3.Normalize(Vector3.Cross(bb - a, c - a)),
-                    Barycentric = b,
-                };
-                if (!MirrorHit(hit, out var mirrored) || Model.TextureOf(mirrored.Part) != state.ActiveTexture) return null;
-                return Raycast.UvAt(Model.Source.Parts[mirrored.Part], mirrored.Triangle, mirrored.Barycentric) * size;
-            }
-        }
-        return null;
+        if (!HitAtTexel(texelPoint, out var hit)) return null;
+        if (!MirrorHit(hit, out var mirrored) || Model!.TextureOf(mirrored.Part) != state.ActiveTexture) return null;
+        var tex = Model.Textures[state.ActiveTexture];
+        return Raycast.UvAt(Model.Source.Parts[mirrored.Part], mirrored.Triangle, mirrored.Barycentric) * new Vector2(tex.Width, tex.Height);
     }
 
     // ---------- Shift+click straight lines ----------
@@ -181,6 +158,32 @@ internal sealed partial class App
         }
         mirrorX = false;
 
+        // Island and face fills from the middle of the view.
+        string fills = "no hit";
+        {
+            var ray = Raylib.GetScreenToWorldRayEx(new Vector2(view3d.Width, view3d.Height) * 0.5f, camera, view3d.Width, view3d.Height);
+            if (Raycast.Cast(Model.Source, ray.Position, ray.Direction, i => i == state.ActiveObject, out var hit) && Model.TextureOf(hit.Part) >= 0)
+            {
+                var tex = Model.Textures[Model.TextureOf(hit.Part)];
+                int Changed(Color[] before) => before.Where((c, i) => !c.Equals(tex.Pixels[i])).Count();
+                var saveHsv = hsv;
+                var saveMode = fillMode;
+                hsv = new Vector3(0.8f, 1f, 1f);
+                var before = (Color[])tex.Pixels.Clone();
+                fillMode = FillMode.Face;
+                FillShape(hit);
+                int face = Changed(before);
+                fillMode = FillMode.Island;
+                FillShape(hit);
+                int island = Changed(before);
+                undo.Undo();
+                undo.Undo();
+                fills = $"face filled {face} texels, island {island} (island >= face), undone {Changed(before) == 0}";
+                hsv = saveHsv;
+                fillMode = saveMode;
+            }
+        }
+
         float saved = smoothing;
         smoothing = 0.5f;
         pointer = Vector2.Zero;
@@ -188,6 +191,7 @@ internal sealed partial class App
         bool slack = !Stabilize(new Vector2(10, 0), out _);
         Stabilize(new Vector2(50, 0), out var pulled);
         smoothing = saved;
+        Console.WriteLine($"[selftest] fills on {obj.Name}: {fills}");
         Console.WriteLine($"[selftest] mirror on {obj.Name}: {mirror}; stabilizer (30 px string): 10 px slack {slack}, pulled to {pulled.X:0} (expect 20)");
     }
 }

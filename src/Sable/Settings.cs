@@ -20,6 +20,8 @@ internal sealed class Settings
     public float FillTolerance { get; set; }
     public bool FillContiguous { get; set; } = true;
     public bool FillAllLayers { get; set; }
+    /// <summary>0 similar colour, 1 UV island, 2 face.</summary>
+    public int FillMode { get; set; }
     public bool MirrorX { get; set; }
     /// <summary>The stroke stabilizer's string, 0..1 of its longest.</summary>
     public float Smoothing { get; set; }

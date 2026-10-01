@@ -14,7 +14,9 @@ internal static partial class Program
         if (args.Any(a => a is "--check" or "--bench" or "--selftest" or "--linktest")) AttachConsole(AttachParentProcess);
         if (args.Length > 1 && args[0] == "--check")
         {
-            Model.MeshCheck.Print(Model.ModelLoader.Load(args[1], _ => { }));
+            var model = Model.ModelLoader.Load(args[1], _ => { });
+            Model.MeshCheck.Print(model);
+            foreach (string line in Paint.UvToolsCheck.Run(model)) Console.WriteLine("[uv] " + line);
             return 0;
         }
         var options = AppOptions.Parse(args);

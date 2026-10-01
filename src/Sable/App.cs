@@ -1095,6 +1095,11 @@ internal sealed partial class App : IDisposable
                 : "This part has no UVs: unwrap it in Blender first.", error: true);
             return;
         }
+        if (fillMode != FillMode.Similar && !ShiftDown)
+        {
+            FillShape(hit);
+            return;
+        }
         var tex = Model.Textures[texture];
         var (x, y) = Brush.TexelAt(Model.Source, hit, new Vector2(tex.Width, tex.Height));
         FillFrom(texture, tex.Wrap(x, tex.Width), tex.Wrap(y, tex.Height));
@@ -1112,6 +1117,12 @@ internal sealed partial class App : IDisposable
             return;
         }
         state.ActiveTexture = texture;
+        if (fillMode != FillMode.Similar && !shift)
+        {
+            if (HitAtTexel(new Vector2(x + 0.5f, y + 0.5f), out var hit)) FillShape(hit);
+            else SetStatus("No UV island of the active object there.", error: false);
+            return;
+        }
         palette.Remember(ColorWheel.HsvToRgb(hsv));
         var fill = new Stroke(tex, PaintColor, 1f, mask);
         if (shift)
@@ -1123,6 +1134,9 @@ internal sealed partial class App : IDisposable
         {
             if (fillAllLayers) tex.EnsureComposite();
             Brush.Flood(fill, x, y, fillTolerance, fillContiguous, mask, fillAllLayers ? tex.Composite : null);
+            if (MirrorTexel(new Vector2(x + 0.5f, y + 0.5f)) is { } mirrored)
+                Brush.Flood(fill, tex.Wrap((int)MathF.Floor(mirrored.X), tex.Width), tex.Wrap((int)MathF.Floor(mirrored.Y), tex.Height),
+                    fillTolerance, fillContiguous, mask, fillAllLayers ? tex.Composite : null);
         }
         if (fill.Finish() is { } step) undo.Push(step);
     }
@@ -1913,13 +1927,21 @@ internal sealed partial class App : IDisposable
 
         if (tool == Tool.Fill)
         {
-            float tolerancePercent = fillTolerance * 100f;
+            int mode = (int)fillMode;
             ImGui.SetNextItemWidth(150);
-            if (ImGui.SliderFloat("Tolerance", ref tolerancePercent, 0f, 100f, "%.0f%%")) fillTolerance = tolerancePercent / 100f;
-            ImGui.Checkbox("Contiguous", ref fillContiguous);
-            ImGui.SameLine();
-            ImGui.Checkbox("All layers", ref fillAllLayers);
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Find the area to fill by what all the layers show together, not just the selected layer.");
+            if (ImGui.Combo("Fills", ref mode, FillModeNames, FillModeNames.Length)) fillMode = (FillMode)mode;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Similar colour: the bucket fill, by Tolerance and Contiguous.\nUV island: the whole island clicked, edge texels included.\nFace: the polygon clicked (rebuilt from its triangles).");
+            if (fillMode == FillMode.Similar)
+            {
+                float tolerancePercent = fillTolerance * 100f;
+                ImGui.SetNextItemWidth(150);
+                if (ImGui.SliderFloat("Tolerance", ref tolerancePercent, 0f, 100f, "%.0f%%")) fillTolerance = tolerancePercent / 100f;
+                ImGui.Checkbox("Contiguous", ref fillContiguous);
+                ImGui.SameLine();
+                ImGui.Checkbox("All layers", ref fillAllLayers);
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip("Find the area to fill by what all the layers show together, not just the selected layer.");
+            }
             ImGui.TextDisabled("Shift+click: fill selection");
         }
 
@@ -2447,6 +2469,7 @@ internal sealed partial class App : IDisposable
         split = Math.Clamp(saved.Split, 0.15f, 0.85f);
         newTextureSize = ValidTextureSize(saved.NewTextureSize);
         fillAllLayers = saved.FillAllLayers;
+        fillMode = (FillMode)Math.Clamp(saved.FillMode, 0, 2);
         palette.LoadFrom(saved);
         mirrorX = saved.MirrorX;
         smoothing = Math.Clamp(saved.Smoothing, 0f, 1f);
@@ -2494,6 +2517,7 @@ internal sealed partial class App : IDisposable
             Split = split,
             NewTextureSize = newTextureSize,
             FillAllLayers = fillAllLayers,
+            FillMode = (int)fillMode,
             MirrorX = mirrorX,
             Smoothing = smoothing,
             RecentFolders = fileBrowser.RecentFolders.ToList(),
