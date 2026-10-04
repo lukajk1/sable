@@ -653,6 +653,7 @@ internal sealed partial class App : IDisposable
             if (Pressed(KeyboardKey.Y)) { EndStroke(); undo.Redo(); }
             if (Raylib.IsKeyPressed(KeyboardKey.D)) state.Selection = null;
             if (Raylib.IsKeyPressed(KeyboardKey.T)) BeginTransform();
+            if (Raylib.IsKeyPressed(KeyboardKey.V)) Paste();
             HandleLayerShortcuts(shift);
             return;
         }
@@ -1842,6 +1843,9 @@ internal sealed partial class App : IDisposable
             if (ImGui.MenuItem("Merge layer down", "Ctrl+E", false, layers && ActiveTextureObject!.CanMergeDown)) MergeLayerDown();
             if (ImGui.MenuItem("New smoothness mask", null, false, layers && ActiveTextureObject!.Mask == null)) NewSmoothnessMask();
             if (ImGui.MenuItem("Bleed edges of layer...", null, false, layers)) openBleed = true;
+            if (ImGui.MenuItem("Paste image as layer", "Ctrl+V", false, layers && transform == null)) Paste();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("The clipboard's image on a new layer, in a transform box to place it. Bigger than the texture: shrunk to about 60% of its area.");
             ImGui.Separator();
             if (ImGui.MenuItem("Edit in Photoshop", null, false, layers)) EditInPhotoshop();
             if (ImGui.MenuItem("Stop Photoshop link", null, false, PhotoshopLinked)) StopPhotoshopLink();
@@ -2454,6 +2458,7 @@ internal sealed partial class App : IDisposable
                 SelfTestStrokes();
                 if (state.ActiveTexture >= 0) SelfTestPadding(Model.Textures[state.ActiveTexture]);
                 if (state.ActiveTexture >= 0) SelfTestTransform(Model.Textures[state.ActiveTexture]);
+                if (state.ActiveTexture >= 0) SelfTestPaste(Model.Textures[state.ActiveTexture]);
                 if (state.ActiveTexture >= 0) SelfTestPhotoshop(Model.Textures[state.ActiveTexture]);
                 if (state.ActiveTexture >= 0) SelfTestSmoothness(Model.Textures[state.ActiveTexture]);
 

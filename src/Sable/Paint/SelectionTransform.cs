@@ -79,6 +79,8 @@ public sealed class SelectionTransform
 
     public TransformState Start { get; }
     public TransformState Current { get; private set; }
+    /// <summary>Placing a pasted image rather than texels lifted off the layer: placing it at all is the change.</summary>
+    public bool Pasted { get; }
 
     public SelectionTransform(PaintTexture texture, TexelSelection selection)
     {
@@ -111,6 +113,27 @@ public sealed class SelectionTransform
             liftedMask[y * liftedWidth + x] = true;
             underneath[i] = new Color(0, 0, 0, 0);
         }
+    }
+
+    /// <summary>
+    /// Places a pasted <paramref name="width"/> x <paramref name="height"/> image on the active layer (usually a new,
+    /// empty one), centred on <paramref name="center"/>; its transparent texels aren't selected. Nothing is lifted off
+    /// the layer, so cancelling leaves it as it was.
+    /// </summary>
+    public SelectionTransform(PaintTexture texture, TexelSelection selection, Color[] image, int width, int height, Vector2 center)
+    {
+        this.texture = texture;
+        layer = texture.ActiveLayer;
+        startSelection = selection.Clone();
+        Pasted = true;
+        liftedWidth = width;
+        liftedHeight = height;
+        lifted = image;
+        liftedMask = new bool[image.Length];
+        for (int i = 0; i < image.Length; i++) liftedMask[i] = image[i].A > 0;
+        before = (Color[])layer.Pixels.Clone();
+        underneath = (Color[])layer.Pixels.Clone();
+        Start = Current = new TransformState(center, width, height, 0f, false, false).Aligned();
     }
 
     /// <summary>Places the lifted texels as <paramref name="state"/> says and moves the selection with them.</summary>
@@ -190,5 +213,5 @@ public sealed class SelectionTransform
 
     /// <summary>The undo step, or null if nothing changed.</summary>
     public UndoStep? Finish() =>
-        Current == Start ? null : UndoStep.Capture(texture, layer, before, 0, 0, texture.Width, texture.Height);
+        Current == Start && !Pasted ? null : UndoStep.Capture(texture, layer, before, 0, 0, texture.Width, texture.Height);
 }

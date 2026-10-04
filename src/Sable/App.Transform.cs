@@ -1,6 +1,7 @@
 using System.Numerics;
 using ImGuiNET;
 using Raylib_cs;
+using Sable.Input;
 using Sable.Paint;
 
 namespace Sable;
@@ -19,6 +20,66 @@ internal sealed partial class App
     private Vector2 transformStartMouse;
     private TransformState transformStartState;
     private bool transformSmooth;
+    /// <summary>The layer a paste added, while its image is still being placed: undone on cancel, merged into one step on apply.</summary>
+    private LayerStep? pasteLayer;
+
+    /// <summary>A pasted image bigger than the texture is shrunk to about this share of its area.</summary>
+    private const float PasteArea = 0.6f;
+
+    /// <summary>
+    /// Ctrl+V: the clipboard's image goes on a new layer of the active texture inside a transform box, ready to place
+    /// (Enter applies, Esc takes the layer away again). One bigger than the texture is first shrunk, smoothly, to
+    /// about 60% of the texture's area. It lands under the pointer in the UV view, else in the middle.
+    /// </summary>
+    private void Paste()
+    {
+        if (transform != null) return;
+        if (ActiveTextureObject is not { } texture)
+        {
+            SetStatus("Paste needs a texture: open a model and pick one to paint.", error: true);
+            return;
+        }
+        if (ClipboardImage.Read(out string why) is not { } image)
+        {
+            SetStatus($"Nothing to paste: {why}.", error: true);
+            return;
+        }
+        PasteImage(texture, image);
+    }
+
+    private void PasteImage(PaintTexture texture, ClipboardImage.Result image)
+    {
+        EndStroke();
+
+        var pixels = image.Pixels;
+        int width = image.Width, height = image.Height;
+        string size = $"{width}x{height}";
+        if (width > texture.Width || height > texture.Height)
+        {
+            float k = MathF.Min(MathF.Sqrt(PasteArea * texture.Width * texture.Height / ((float)width * height)),
+                MathF.Min(texture.Width / (float)width, texture.Height / (float)height));
+            int w = Math.Max(1, (int)MathF.Round(width * k)), h = Math.Max(1, (int)MathF.Round(height * k));
+            pixels = Resampler.Resample(pixels, width, height, w, h, smooth: true);
+            size += $", shrunk to {w}x{h}";
+            (width, height) = (w, h);
+        }
+
+        var before = texture.Snapshot();
+        string name = "Pasted";
+        for (int n = 2; texture.Layers.Any(l => l.Name == name); n++) name = $"Pasted {n}";
+        texture.InsertLayer(Layer.Transparent(name, texture.Width, texture.Height));
+        pasteLayer = new LayerStep(texture, before, texture.Snapshot());
+
+        var selection = new TexelSelection(state.ActiveTexture, texture.Width, texture.Height);
+        state.Selection = selection;
+        var center = uvView.Hovered
+            ? Vector2.Clamp(uvView.MouseTexel, Vector2.Zero, new Vector2(texture.Width, texture.Height))
+            : new Vector2(texture.Width, texture.Height) * 0.5f;
+        transform = new SelectionTransform(texture, selection, pixels, width, height, center);
+        transform.Place(transform.Current, transformSmooth, selection);
+        state.TransformCorners = transform.Current.Corners();
+        SetStatus($"Pasted {image.Source} ({size}) on {name}: place it (corners scale, inside moves, outside a corner rotates). Enter applies, Esc cancels.", error: false);
+    }
 
     private void BeginTransform()
     {
@@ -44,9 +105,17 @@ internal sealed partial class App
     private void CommitTransform()
     {
         if (transform == null) return;
-        if (transform.Finish() is { } step) undo.Push(step);
+        var finished = transform.Finish();
+        if (pasteLayer != null) undo.Push(new PasteStep(pasteLayer, finished));
+        else if (finished != null) undo.Push(finished);
+        bool pasted = pasteLayer != null;
         var (start, now) = (transform.Start, transform.Current);
         EndTransform();
+        if (pasted)
+        {
+            SetStatus($"Placed the paste at {now.Width}x{now.Height}{(now.Angle != 0 ? $", turned {Degrees(now.Angle):0.#}°" : "")}.", error: false);
+            return;
+        }
         SetStatus(now == start ? "Transform: nothing changed."
             : $"Transformed {start.Width}x{start.Height} to {now.Width}x{now.Height}{(now.Angle != 0 ? $", turned {Degrees(now.Angle):0.#}°" : "")}"
               + $"{(now.FlipX ? ", flipped horizontally" : "")}{(now.FlipY ? ", flipped vertically" : "")}.", error: false);
@@ -56,13 +125,17 @@ internal sealed partial class App
     {
         if (transform == null) return;
         if (state.Selection != null) transform.Cancel(state.Selection);
+        bool pasted = pasteLayer != null;
+        pasteLayer?.Undo();
+        if (pasted) state.Selection = null;
         EndTransform();
-        SetStatus("Transform cancelled.", error: false);
+        SetStatus(pasted ? "Paste cancelled." : "Transform cancelled.", error: false);
     }
 
     private void EndTransform()
     {
         transform = null;
+        pasteLayer = null;
         state.TransformCorners = null;
         transformDrag = transformHover = Handle.None;
     }
@@ -251,6 +324,38 @@ internal sealed partial class App
     }
 
     /// <summary>
+    /// Paste: an image twice the texture's size shrinks to about 60% of its area and goes on a new layer; applying
+    /// is one undo step that takes the layer away again; cancelling removes the layer at once.
+    /// </summary>
+    private void SelfTestPaste(PaintTexture tex)
+    {
+        state.ActiveTexture = Model!.Textures.IndexOf(tex);
+        int layers = tex.Layers.Count;
+        var before = (Color[])tex.Pixels.Clone();
+        var image = new Color[tex.Width * 2 * tex.Height * 2];
+        Array.Fill(image, new Color(200, 30, 40, 255));
+        var result = new ClipboardImage.Result(image, tex.Width * 2, tex.Height * 2, "selftest");
+
+        PasteImage(tex, result);
+        var placed = transform!.Current;
+        float area = placed.Width * placed.Height / (float)(tex.Width * tex.Height);
+        bool onNewLayer = tex.Layers.Count == layers + 1 && tex.ActiveLayer.Name.StartsWith("Pasted");
+        bool painted = tex.ActiveLayer.Pixels.Count(c => c.A > 0) == placed.Width * placed.Height;
+        CommitTransform();
+        undo.Undo();
+        bool undone = tex.Layers.Count == layers && tex.Pixels.SequenceEqual(before);
+        undo.Redo();
+        bool redone = tex.Layers.Count == layers + 1 && tex.ActiveLayer.Pixels.Count(c => c.A > 0) == placed.Width * placed.Height;
+        undo.Undo();
+
+        PasteImage(tex, result);
+        CancelTransform();
+        bool cancelled = tex.Layers.Count == layers && tex.Pixels.SequenceEqual(before) && state.Selection == null;
+        Console.WriteLine($"[selftest] paste: {result.Width}x{result.Height} into {tex.Width}x{tex.Height} placed {placed.Width}x{placed.Height} "
+                          + $"({area:P0} of the area, expect ~60%); new layer {onNewLayer}, all placed {painted}; undo removes it {undone}, redo {redone}; cancel removes it {cancelled}");
+    }
+
+    /// <summary>
     /// Ctrl+T: a 4x4 block scaled 2x (nearest) lands as exact 2x2 copies with the selection following; a quarter
     /// turn moves each texel where a clockwise turn should; undo and cancel restore.
     /// </summary>
@@ -296,5 +401,32 @@ internal sealed partial class App
         state.Selection = null;
         Console.WriteLine($"[selftest] transform: 4x4 -> 8x8 nearest exact {scaled}, selection {selected} texels (expect 64); undo restores {undone}; "
                           + $"+90 exact {turned}; flip H exact {flipped}; cancel restores {cancelled}");
+    }
+}
+
+/// <summary>A paste as one undo step: the layer it added, and the image placed on it.</summary>
+internal sealed class PasteStep : IUndoStep
+{
+    private readonly LayerStep layer;
+    private readonly IUndoStep? pixels;
+
+    public PasteStep(LayerStep layer, IUndoStep? pixels)
+    {
+        this.layer = layer;
+        this.pixels = pixels;
+    }
+
+    public long Bytes => layer.Bytes + (pixels?.Bytes ?? 0);
+
+    public void Undo()
+    {
+        pixels?.Undo();
+        layer.Undo();
+    }
+
+    public void Redo()
+    {
+        layer.Redo();
+        pixels?.Redo();
     }
 }
